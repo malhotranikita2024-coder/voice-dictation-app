@@ -1,0 +1,843 @@
+# Voice Dictation App — Project Notes
+
+**Status:** Planning
+**Last updated:** 2026-08-17
+**Owner:** Nikita Malhotra
+
+---
+
+## Table of contents
+
+1. [The task](#1-the-task)
+2. [What this document is](#2-what-this-document-is)
+3. [What we're building](#3-what-were-building)
+4. [Wispr Flow — study notes](#4-wispr-flow--study-notes)
+5. [Architecture](#5-architecture)
+6. [Tech stack decisions](#6-tech-stack-decisions)
+7. [Roadmap: v0 → v3](#7-roadmap-v0--v3)
+8. [Repository structure](#8-repository-structure)
+9. [Local development setup](#9-local-development-setup)
+10. [Decision log](#10-decision-log)
+11. [Learning log](#11-learning-log)
+12. [Open questions](#12-open-questions)
+13. [Future iterations](#13-future-iterations-v4-out-of-scope-for-this-project)
+
+---
+
+## 1. The task
+
+Verbatim from the assignment:
+
+> The idea is to learn basic infra for tech and get comfortable with using Claude Code.
+>
+> - Download and use Wispr Flow to understand the product.
+> - Replicate it as a desktop app (whatever system you have — either Windows or Mac): system-wide voice dictation that transcribes speech in real-time using Deepgram's API, cleans up the output (punctuation, formatting, filler-word removal), and injects text directly into whatever app/field the user is focused on. Figure out the rest — hotkey trigger, permissions flow, UI, tech stack — by studying how Wispr Flow does it and building an equivalent.
+> - Push your code to a new GitHub repo.
+> - Host your app on a simple webpage with a simple download link that downloads the app.
+
+Two things worth noting from the task text:
+
+- **"Figure out the rest by studying how Wispr Flow does it"** — Wispr Flow is the reference. My job is to observe it and rebuild the equivalent, not to invent something new.
+- **"Simple webpage with a simple download link"** — literally a webpage with a download button. Not a marketing site.
+
+---
+
+## 2. What this document is
+
+A living planning + learning document that grows as we build. Every non-obvious choice (library picked, approach taken, trade-off accepted) gets written down here with the reasoning, so I can:
+
+- Explain any decision when asked
+- Reference back to alternatives I considered
+- Show the thinking, not just the finished code
+
+**The rule**: if I can't explain a choice in my own words, I don't yet understand it — and we go back and re-learn it before continuing.
+
+Claude Code drafts sections here, but I rewrite in my own words. The rewriting *is* the understanding check.
+
+---
+
+## 3. What we're building
+
+Two deliverables, shipped together:
+
+**A Windows desktop app** — runs quietly in the background. When I hold a chosen hotkey, it captures my voice, transcribes it live via Deepgram, cleans up the result with an LLM (punctuation, filler removal, formatting), and pastes the cleaned text into whatever app window is currently focused (Slack, Gmail, VS Code, Word — anywhere text can be typed).
+
+**A simple webpage** — one page, hosted on GitHub Pages, with a download button that points at the installer file.
+
+Target OS: **Windows 11**. Chosen because it's the machine I have. Not building a Mac version.
+
+---
+
+## 4. Wispr Flow — study notes
+
+Website: [wisprflow.ai](https://wisprflow.ai)
+
+The task says to figure out hotkey, permissions, UI, and tech stack by studying Wispr Flow. This section captures what I observed from actually using it (screenshots on file, 2026-08-17).
+
+### Hotkey pattern
+
+- **Suggested default: `Ctrl + Shift`** (hold both simultaneously). Recommended in the onboarding as "the keys at the bottom left of the keyboard."
+- **Not a fixed choice — fully configurable.** Just like Wispr Flow: they suggest Ctrl+Shift as the default but users can rebind the shortcut both during onboarding (the "Test keyboard shortcut" screen has an "Edit shortcut" button) and later from the settings window. Same for our clone.
+- **Interaction**: hold-to-record, release-to-transcribe-and-paste. Not tap-to-toggle.
+- **Visual confirmation during onboarding**: buttons turn **purple** while the keys are pressed, so the user knows the app is detecting them correctly. Same visual pattern Wispr uses.
+
+### Recording indicator (the "pill")
+
+- **Position**: small dark elliptical pill at the **bottom-center of the screen**. Fixed position — does NOT follow the cursor.
+- **Idle state**: minimal — just the pill with a subtle dashes/dots pattern.
+- **Active recording state**: contains ~3 elements: a language chip (globe icon), a mic icon, and a small options menu.
+- **Instruction chips**: while recording, a small chip appears near the pill showing the currently-configured hotkey.
+
+### Onboarding flow (Wispr's full list, then what we keep)
+
+Wispr Flow's onboarding is 5 top-level steps across ~15 sub-screens. Here's every screen I observed from actually going through it:
+
+**Sign Up**
+1. **"Where did you hear about us?"** — attribution options (Friend/Family, Product Hunt, Newsletter, YouTube, Podcast, Steven Bartlett, etc.)
+2. **"Tell us about yourself"** — role selection (Student, Consultant, Founder/CEO, Developer, Writer, Sales, etc.) with social proof ("Trusted by 1,000,000+ people like you!") and a testimonial from Rahul Vohra, CEO of Superhuman
+
+**Permissions**
+3. **"You control your data"** — data policy toggle (Help improve Flow vs. Privacy Mode)
+4. **"Test your microphone"** — visual audio-level bars; also triggers the OS microphone permission prompt the first time
+
+**Set Up**
+5. **"Set all the languages you speak"** — language selection (Wispr supports 100+)
+6. **"Test the keyboard shortcut"** — recommends Ctrl+Shift with visual purple key highlight when pressed; includes an **"Edit shortcut"** button so users can rebind
+
+**Learn**
+7. **"Use Flow to send a message"** — Slack mockup teaching the interaction: "Hold down Ctrl Shift, say something, then release"
+8. **"Click into the text field here"** — follow-up prompting the user to place their cursor
+
+**Personalize**
+9. **"Where do you spend time typing?"** — use-case selection (Chatting with AI, Coding with AI, Sending messages, Drafting emails, Writing documents, Taking notes, Writing posts or comments, Something else)
+10. **"With Flow you could save 23 hours a week!"** — typing time/day slider (ROI pitch)
+11. **"Test your typing speed"** — actual typing test with the option "Don't believe us?"
+12. **"Nice job! You just spoke 2.2× faster"** — result screen comparing dictation speed vs. typing speed
+13. **"Give the magic of Flow. Get a month of Pro."** — referral link with a Flow Pro card
+14. **"How would you like to use Flow first?"** — final destination selection (Chat with AI, Take a note, Write a message, Draft an email, Write a post or comment, Write a document, Prompt Cursor or Windsurf)
+
+**Post-onboarding**
+15. **"You're ready to Flow everywhere"** — dismissible confirmation popup
+
+### What's included now, and what to consider for later
+
+**Included in v0-v3:**
+
+- **Paste API keys** — BYOK setup, since users provide their own keys
+- **Test microphone** (Wispr screen 4) — triggers Windows mic permission + visually confirms it works
+- **Test keyboard shortcut** (Wispr screen 6) — confirms hotkey detection, lets user rebind
+
+**To consider for future versions** (ordered roughly by how applicable to our project — most relevant on top, most Wispr-specific at the bottom):
+
+- **Slack learn screen** (screen 7) — teaching moment for the hold-and-speak interaction
+- **"Click into the text field here" follow-up** (screen 8) — completes the Slack teaching
+- **"How would you like to use Flow first?"** (screen 14) — steering nudge to help users try it in a real app first
+- **Language selection** (screen 5) — becomes relevant if multi-language support is added
+- **Data policy toggle** (screen 3) — becomes relevant if we ever start collecting any data
+- **Role selection + social proof** (screen 2) — Wispr uses for personalization and credibility
+- **Attribution "Where did you hear about us?"** (screen 1) — marketing/attribution
+- **Typing speed comparison flow** (screens 10–12) — Wispr uses to demonstrate value vs. typing
+- **Referral link** (screen 13) — Wispr uses to promote their Pro tier
+- **"Ready to Flow everywhere" wrap-up popup** (screen 15) — marketing confirmation
+
+**Result: 3 screens for our onboarding in v0-v3** — Paste API keys → Test microphone → Test hotkey.
+
+### What each of our 3 screens does (in detail)
+
+1. **Paste API keys** (Deepgram + Groq) — the BYOK step. Since we don't run a backend, users provide their own keys.
+2. **Test microphone** — visual audio-level bars (same "purple bars" concept Wispr uses). This screen also **triggers the Windows microphone permission prompt** the first time. User speaks → sees the bars move → confirms it works.
+3. **Test hotkey** — user holds Ctrl+Shift → the app visually confirms detection (keys "light up" in the UI, same as Wispr's purple key highlight). **Users can rebind the shortcut here** (matches Wispr's "Edit shortcut" pattern).
+
+After these three, the tray icon appears and the user can start dictating anywhere.
+
+### Main app UI (home dashboard)
+
+Wispr Flow's home dashboard has a left sidebar with **8 features**: Dictation, Notetaker, Insights, Dictionary, Snippets, Style, Transforms, Scratchpad.
+
+**We only build one feature: Dictation.** No sidebar, no stats, no history list in v1/v2.
+
+### Landing page
+
+Wispr's actual landing page (wisprflow.ai) is a full marketing site: dark hero with a big serif-italic headline ("Don't type, *just speak.*"), stats card, integration logos, long feature scroll, testimonials, FAQ, extensive footer.
+
+**Not replicating any of that.** Our landing page is one screen with a headline and a download button, per the task spec.
+
+**Borrowing the aesthetic, not the content**: dark background, big typographic headline, minimal chrome.
+
+### What Wispr has that we are explicitly **not** building
+
+- Notetaker, Insights, Dictionary, Snippets, Style, Transforms, Scratchpad
+- Voice Profile / user stats
+- Referral system, Pro tier upsell
+- Typing speed comparison
+- "Next step → open ChatGPT" workflow prompts
+- Multi-language UI (v1/v2 are English-only)
+- In-app dictation history
+- Slack learning demo, personalization
+- Social proof / testimonial screens
+- Data collection consent screen
+
+### Permissions flow (what the task calls out)
+
+The task specifically calls out "permissions flow" as one of the things to figure out. Here's how our clone handles it.
+
+**Windows permissions actually required for our app:**
+- **Microphone access** — required. Windows shows a system-level permission popup the first time we call `getUserMedia`. We trigger this deliberately during the "test microphone" step of onboarding (screen 2 above), so it's not surprising later when the user first tries to dictate.
+- **Nothing else needs an OS permission on Windows.** Global keyboard listener, clipboard read/write, text injection into other apps, and running in the background via tray — all work without explicit prompts as long as we avoid keys that need admin rights (which is why we chose Ctrl+Shift, not the Fn key or system-reserved combos).
+
+**How we handle mic-permission denial:**
+If the user denies mic access, the app cannot function. Show a clear error explaining how to re-enable it in Windows Settings (Settings → Privacy & security → Microphone → allow the app) with a "Try again" button that re-attempts the mic test.
+
+**What Wispr's Permissions step includes that we skip:**
+- **Data policy choice** ("Help improve Flow" — allowing them to collect audio + transcripts for training — or "Privacy Mode" — opting out). We don't collect any data. Audio and text go directly from the user's machine to Deepgram/Groq using the user's own API keys. Nothing for us to ask about.
+
+**Contrast with macOS (not our target, useful background):**
+On Mac, apps like this need three separate system prompts: **Microphone + Accessibility (needed for global keyboard hooks) + Input Monitoring (needed for reading keyboard events)**. Wispr's Mac onboarding has extra screens for each. Windows only needs the mic prompt, which is why our onboarding is short.
+
+---
+
+## 5. Architecture
+
+### High-level flow
+
+```
+┌─────────────────────── MY LAPTOP ───────────────────────────┐
+│                                                              │
+│  [Tray icon]  [Settings window]  [Floating "recording" pill] │
+│         │              │                    ▲                │
+│         └──────────┬───┴────────────────────┘                │
+│                    ▼                                          │
+│  ┌─── Electron app (main process + renderer) ─────────────┐ │
+│  │                                                          │ │
+│  │  1. Hotkey listener (main, uiohook-napi)                 │ │
+│  │           ▼                                              │ │
+│  │  2. Audio capture (renderer, Web Audio API)              │ │
+│  │           │ audio chunks sent to main via IPC            │ │
+│  │           ▼                                              │ │
+│  │  3. Deepgram client (main) ──audio stream──▶ Deepgram   │ │
+│  │           ◀─────────── raw text ────────── servers       │ │
+│  │           ▼                                              │ │
+│  │  4. Groq client (main) ─────raw text─────▶  Groq         │ │
+│  │           ◀────────── cleaned text ─────── servers       │ │
+│  │           ▼                                              │ │
+│  │  5. Clipboard (main, Electron built-in) + Ctrl+V paste  │ │
+│  │     via nut-js into focused external app                 │ │
+│  │                                                          │ │
+│  │  API keys (Deepgram + Groq) LIVE ONLY IN MAIN.           │ │
+│  │  Renderer never sees or handles them.                    │ │
+│  │                                                          │ │
+│  └──────────────────────────────────────────────────────────┘ │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+
+Landing page (separate deliverable):
+
+   [Any browser] ────▶ [GitHub Pages: index.html]
+                              │
+                       click Download
+                              │
+                              ▼
+                     [GitHub Releases: app.exe]
+```
+
+### Electron's two-process model (short version)
+
+Electron apps have two kinds of JavaScript running at once:
+
+- **Main process** — runs Node.js. Has access to the OS: files, tray icon, native modules (hotkey listener, text injection). One per app.
+- **Renderer process** — runs a Chromium browser tab. Draws the UI (settings window, floating pill). Has access to browser APIs (Web Audio, DOM). One per window.
+
+They talk to each other over **IPC** (inter-process communication) — a message-passing system built into Electron.
+
+**In our app:**
+- **Main process**: hotkey listener, tray icon, config file read/write, **Deepgram WebSocket, Groq API call**, clipboard + paste simulation. **Holds all API keys.**
+- **Renderer process**: audio capture (Web Audio API) — sends chunks to main via IPC — plus the UI (settings window, floating pill). **Never touches API keys.**
+
+### Frontend / backend split
+
+| Layer | What it is | Who runs it |
+|---|---|---|
+| Desktop app UI (renderer) | Tray icon window, settings window, floating pill | User's machine |
+| Desktop app "backend" (main) | Hotkey listener, API calls, paste, config storage | User's machine (Node process) |
+| Website frontend | One static HTML page | GitHub Pages |
+| Third-party backends called | Deepgram (STT) + Groq (LLM) | Their servers |
+
+**Implication**: no databases, no server deployment, no user accounts.
+
+---
+
+## 6. Tech stack decisions
+
+For each choice: **the job** (what problem it solves), **3–4 options considered** (the one we picked is marked ← with the reasoning attached), and **gotchas** (practical things to know when using it).
+
+### At-a-glance
+
+| Job | Library / tool | Introduced in |
+|---|---|---|
+| Runtime | **Node.js 20 (LTS) + Electron** | v0 |
+| Package manager | **npm** (bundled with Node) | v0 |
+| Audio capture | **Web Audio API (getUserMedia)** in renderer | v0 |
+| Speech-to-text | **Deepgram** — `@deepgram/sdk` (JS) | v0 |
+| LLM cleanup | **Groq** (llama-3.x) — `groq-sdk` | v1 |
+| Global hotkey (hold pattern) | **uiohook-napi** | v0 → v1 |
+| Text injection | **@nut-tree/nut-js** + Electron's built-in `clipboard` | v1 |
+| Env var loading (dev) | **dotenv** | v0 |
+| UI framework | **plain HTML/CSS/JS in Electron BrowserWindow** | v2 |
+| Tray icon | **Electron's built-in `Tray` API** | v2 |
+| Floating pill | **BrowserWindow with frame:false, transparent:true, alwaysOnTop:true** | v2 |
+| Config storage | **electron-store** | v2 |
+| Bundling to installer | **electron-builder** | v3 |
+| Landing page HTML | plain HTML5 | v3 |
+| Landing page CSS | **Tailwind CSS (via CDN)** | v3 |
+| Landing page fonts | **Google Fonts (via CDN)** | v3 |
+| Landing page icons | **Lucide (via CDN)** — optional | v3 |
+| Local page preview | **`npx serve`** | v3 |
+| Version control | **Git + GitHub** | v0 |
+| Static site hosting | **GitHub Pages** | v3 |
+| Binary hosting | **GitHub Releases** | v3 |
+
+---
+
+### Detailed reasoning
+
+#### Runtime
+
+**The job**: the engine that turns our source code into a running program with the ability to draw windows, talk to the OS, and eventually be packaged into a downloadable file for Windows users.
+
+**Options considered**:
+- **Node.js + Electron** ← chosen. What real modern desktop apps use (VS Code, Slack, Discord, Cursor). Skill transfer is high, UI is HTML/CSS/JS which is broadly known, Node ecosystem covers every piece we need. Trade-off accepted: `.exe` is ~150 MB vs. ~40 MB with Python.
+- Python (with PyQt6). Readable, mature libraries, smaller `.exe`. But uncommon for consumer desktop apps, less portfolio-relevant.
+- C# / .NET (WPF). Best native Windows integration, fastest desktop apps possible. Steep learning curve if something breaks.
+- Rust + Tauri. Smallest binaries (~10 MB), fastest, memory-safe. Rust is brutal for a first project.
+
+**Things to know**:
+1. Electron's "two process" architecture (main + renderer) is the first big thing to learn. Everything else builds on it.
+2. Native modules (hotkey + text injection) need Windows Build Tools. Node's installer offers this as a checkbox — tick it.
+3. Pin the Electron version in `package.json` so surprise updates don't break things.
+
+---
+
+#### Package manager
+
+**The job**: download the libraries our code depends on (Electron, Deepgram SDK, etc.) and pin them to exact versions so builds are reproducible.
+
+**Options considered**:
+- **npm** ← chosen. Comes bundled with Node — one less thing to install. Universally understood; every tutorial assumes npm. Speed differences vs. yarn/pnpm don't matter at our project size.
+- yarn. Faster installs, better dependency resolution. npm has caught up in recent years so the gap is smaller.
+- pnpm. Fastest and most disk-efficient. Slightly less universal — some tools assume npm.
+
+**Things to know**:
+1. `npm install` reads `package.json` and writes `package-lock.json`. Commit both.
+2. Never commit `node_modules/`. Add it to `.gitignore`.
+3. Prefer local installs over global (`-g`) whenever possible.
+
+---
+
+#### Audio capture
+
+**The job**: get live microphone audio in small chunks (~250 ms) that we can stream to Deepgram.
+
+**Options considered**:
+- **Web Audio API (getUserMedia)** ← chosen. Already there — no install, no native build, no extra subprocess. Well-documented. Streams chunks in exactly the format Deepgram wants. Only reason to skip would be a CLI-only tool, which we aren't building.
+- node-audiorecorder. Runs in the main process; requires installing `sox` separately.
+- naudiodon (Node bindings to PortAudio). Real Node-native audio; native module means another install risk.
+
+**Things to know**:
+1. You must request microphone permission the first time — Electron shows a system popup.
+2. Web Audio gives you `Float32Array` samples; Deepgram wants 16-bit PCM. Small conversion step.
+3. Default sample rate is often 48000 Hz; Deepgram works better at 16000 Hz. Set explicitly in `getUserMedia` constraints.
+
+---
+
+#### Speech-to-text
+
+**The job**: turn audio into text, live, over a streaming connection.
+
+**Options considered**:
+- **Deepgram (`@deepgram/sdk`)** ← chosen. Required by the task. Independently strong: ~300–500 ms latency, accurate, generous free credit for development, clean official JS SDK.
+- OpenAI Whisper (cloud). Very accurate but not truly streaming — worse for live dictation.
+- AssemblyAI. Deepgram's main competitor. Comparable quality and pricing.
+- Google Speech-to-Text. Enterprise-grade; complex setup and billing tied to Google Cloud.
+
+**Things to know**:
+1. API keys are secrets — never commit. Load from `.env` locally.
+2. Pick a specific model — `nova-2` is Deepgram's current best for streaming English.
+3. Deepgram bills by audio minute. Free credit is generous but not infinite.
+4. Streaming connection can drop mid-recording — SDK auto-reconnects but you need to buffer during the gap.
+
+---
+
+#### LLM cleanup
+
+**The job**: take raw transcript ("um so like i was thinking...") and return cleaned text ("So I was thinking..."). Handles punctuation, capitalization, and filler-word removal.
+
+**Options considered**:
+- **Groq (llama-3.x)** ← chosen. Custom hardware (LPUs) means 5–10× faster inference than OpenAI/Anthropic. Generous free tier. Latency matters — the difference between "magical" and "laggy."
+- OpenAI GPT-4o-mini. Reliable, well-known. Costs per call, slower than Groq.
+- Anthropic Claude Haiku. High quality. Costs, slower than Groq.
+- Local LLM via Ollama. Free forever, offline, private. Slow without GPU; adds ~2 GB to the app.
+
+**Things to know**:
+1. Model choice matters. `llama-3.1-8b-instant` is right for our task — bigger isn't better for simple cleanup.
+2. Prompt engineering matters. A bad prompt makes the LLM change your meaning.
+3. Free tier has rate limits (~30 req/min). Fine for personal use.
+
+---
+
+#### Global hotkey (hold-to-record)
+
+**The job**: detect when Ctrl+Shift is being held down AND when it's released, anywhere in Windows, even when our app isn't focused.
+
+**Options considered**:
+- **uiohook-napi** ← chosen. Only well-maintained option that gives us BOTH keydown and keyup events at the OS level. Modern (still updated in 2025). Needs Windows Build Tools for install.
+- Electron's built-in `globalShortcut`. Ships with Electron, no install. Only fires on press, not release — useless for hold-to-record. Fine for tap-to-toggle.
+- robotjs. Classic library. Install headaches on modern Windows/Node.
+- node-global-key-listener. Pure-Node approach, no native compilation. Slightly less reliable, extra subprocess.
+
+**Things to know**:
+1. Native module — needs Windows Build Tools during install.
+2. Some antivirus software flags keyboard listeners as suspicious. May need allowlisting.
+3. Fallback plan: if uiohook-napi install fails, use Electron's `globalShortcut` with tap-to-toggle instead. Worse UX but zero install risk.
+
+---
+
+#### Text injection
+
+**The job**: put the cleaned text into whatever Windows app has focus — Slack, Gmail, VS Code, anywhere. Uses copy-to-clipboard + simulated Ctrl+V (instant paste, not slow character-by-character typing).
+
+**Options considered**:
+- **@nut-tree/nut-js + Electron's built-in clipboard** ← chosen. Best-maintained modern OS-automation library. Actively developed, works on Windows without admin. Electron's clipboard for the copy part (built-in, zero install).
+- robotjs. Classic library, does everything (keyboard sim + clipboard). Install pain on modern Windows.
+- keysender. Windows-only, lightweight, no admin needed. Solid fallback if nut-js fails to install.
+
+**Things to know**:
+1. Save + restore the user's clipboard — they might have something copied they want to keep.
+2. Small delay (50–100 ms) needed between "copy" and "simulate paste."
+3. Some apps don't handle programmatic paste well (older Java Swing, some games). Same limitation Wispr Flow has.
+4. Fallback plan: if nut-js native build fails, swap to keysender.
+
+---
+
+#### Env var loading (dev)
+
+**The job**: keep API keys OUT of source code (never commit them) but still accessible to the running app during development.
+
+**Options considered**:
+- **dotenv** ← chosen. Standard. Every Node tutorial uses it. Zero cognitive load.
+- envalid. Adds validation (fails at startup if keys are missing). Nice for larger projects.
+- Node's built-in `--env-file` flag (Node 20+). No library needed. Newer, less well-known, only works when launching Node with that flag.
+
+**Things to know**:
+1. `.env` MUST be in `.gitignore` — critical security rule.
+2. Ship a `.env.example` file (safe to commit) so anyone cloning the repo knows what keys to provide.
+3. In production (packaged `.exe`), we don't use dotenv — user pastes keys into settings, saved via electron-store.
+
+---
+
+#### UI framework
+
+**The job**: draw the two visible UI pieces — settings window (small form for API keys and hotkey) and floating recording pill.
+
+**Options considered**:
+- **Plain HTML/CSS/JS** ← chosen. Our UI is TINY. A framework would be like buying a truck for a shoebox. Zero build step, no learning curve. Can swap to React later in ~half a day if v2 grows.
+- React. Component-based, huge ecosystem, matches Dograh's stack. Adds build step and ~150 KB runtime.
+- Vue. Gentler than React, similar overhead.
+- Svelte. Compiles away, no runtime. Smaller community than React.
+
+**Things to know**:
+1. Each window (settings, pill) is a separate HTML file loaded into its own BrowserWindow.
+2. Renderer ↔ main process communication happens over IPC (`ipcRenderer` / `ipcMain`). Meet this concept in v0.
+3. Use `preload.js` to expose ONLY the specific IPC channels the renderer needs (security best practice).
+
+---
+
+#### Tray icon
+
+**The job**: small icon near the Windows clock with a right-click menu (Settings, About, Quit). Lets the user access the app when no window is open.
+
+**Options considered**:
+- **Electron's built-in `Tray` API** ← chosen. No install needed, ships with Electron. Two lines to get started. No serious alternative — any external library would just wrap this.
+
+**Things to know**:
+1. Tray icons should be 16×16 or 32×32 pixels, PNG or ICO format.
+2. Give the icon TWO states — normal and "recording active" — so the user knows what's happening.
+3. On some Windows setups, tray icons are hidden by default (users click the chevron). Mention in README.
+
+---
+
+#### Floating pill
+
+**The job**: small floating overlay at the bottom-center of the screen during recording. Frameless, transparent, always-on-top, doesn't show in the taskbar.
+
+**Options considered**:
+- **Electron BrowserWindow** with `frame:false, transparent:true, alwaysOnTop:true, skipTaskbar:true, focusable:false` ← chosen. Built into Electron. Content is HTML/CSS. This is exactly what BrowserWindow is for; no serious alternative.
+
+**Things to know**:
+1. `focusable: false` is CRITICAL. Without it, clicking the pill would steal focus from Slack (or wherever) and break the paste.
+2. Position via `screen.getPrimaryDisplay().workArea` for correct multi-monitor / taskbar handling.
+3. Show/hide the window based on recording state — don't create/destroy it every time (slower, causes flicker).
+
+---
+
+#### Config storage
+
+**The job**: save API keys + hotkey preference + other settings to disk so they persist between app launches.
+
+**Options considered**:
+- **electron-store** ← chosen. Standard in the Electron world. Handles the "where does the file live on this OS" problem automatically (Windows: `%APPDATA%\<app>\config.json`). Sync API means simple code.
+- Plain `fs` + JSON. Write it yourself. Have to figure out file paths and first-run creation.
+- lowdb. JSON file with a query-like API. Nice for larger data, overkill here.
+
+**Things to know**:
+1. File is JSON in plaintext — API keys are NOT encrypted. Acceptable for personal-use app (the user's machine IS the trust boundary).
+2. Config location varies by OS. Good for cleanliness; check the actual path when debugging.
+
+---
+
+#### Bundling
+
+**The job**: turn our dev folder + node_modules + Chromium + Node into a single Windows `.exe` installer that any stranger can download and run without having Node installed.
+
+**Options considered**:
+- **electron-builder** ← chosen. Most configurable of the popular options. Produces both NSIS installers ("Next → Next → Install" wizard) AND portable `.exe` from the same config. Great auto-update support if we ever add it. Most widely-used in production Electron apps → any problem is answered on Stack Overflow.
+- electron-forge. Electron team's official all-in-one tool. More integrated, easier to start; less configurable for edge cases.
+- electron-packager. Lower-level tool that electron-forge builds on. Maximum control, most manual work.
+
+**Things to know**:
+1. Config lives in `package.json` under a `"build"` key — no separate config file needed.
+2. First build takes ~5 minutes (downloads Electron binaries). Subsequent builds ~1 minute.
+3. Without a code-signing certificate (~$200/year), Windows will show a "protected your PC" warning. Normal for unsigned open-source apps. Mention in README.
+4. Output goes to `dist/` — add to `.gitignore`.
+5. Set `productName` if you want the installer to say "Voice Dictation" instead of "voice-dictation-app."
+
+---
+
+#### Landing page HTML
+
+**The job**: the actual webpage structure — headline, download button, footer.
+
+**Options considered**:
+- **Plain HTML5** ← chosen. It's ONE page. Any framework would be like a truck for a shoebox.
+- React (via Next.js). Component-based, huge ecosystem, matches Dograh's stack. Adds build step + npm complexity for one page.
+- Static site generator (Astro / Eleventy). Great for content sites with multiple pages. Overkill for one page.
+
+**Things to know**: none really. Just remember `<!DOCTYPE html>` and a `<meta viewport>` for mobile.
+
+---
+
+#### Landing page CSS
+
+**The job**: make the page look good — dark background, big centered headline, styled button, generous spacing.
+
+**Options considered**:
+- **Tailwind CSS via CDN** ← chosen. Fastest way to a modern-looking page. Claude Code writes it fluently. CDN = no build step. Trade-off: CDN version is ~500 KB even for unused classes.
+- Plain CSS. No dependencies, full control. More code to write for the same look.
+- Bootstrap. Pre-built components. Pages tend to look like every other Bootstrap site.
+
+**Things to know**:
+1. Tailwind CDN is officially "for prototyping." For our one-page site, fine.
+2. Set colors explicitly, not via browser dark-mode preferences.
+
+---
+
+#### Landing page fonts
+
+**The job**: give the page a modern typographic feel. System defaults (Times, Arial) look dated.
+
+**Options considered**:
+- **Google Fonts via CDN** ← chosen. Massive selection, free, one `<link>` tag. Often already cached in the user's browser from other sites.
+- System fonts (`-apple-system, "Segoe UI", ...`). Zero download, instant. Looks like every OS's default.
+- Self-hosted font files. No external dependency; extra files to manage.
+
+**Things to know**:
+1. Use `font-display: swap` to avoid invisible text while loading. Google's default `<link>` handles this.
+2. Each weight is a separate download. Pick 2 (400 and 700), not all 9.
+
+---
+
+#### Landing page icons
+
+**The job**: a small icon on the download button (e.g., a download-arrow). Optional.
+
+**Options considered**:
+- **Lucide via CDN** ← chosen. Clean modern look, easy to use. Successor to Feather Icons.
+- Heroicons. Made by the Tailwind team, similar quality.
+- Inline SVG. No library needed at all — paste the SVG for one icon directly in HTML. Defensible if we truly only need one icon.
+
+**Things to know**:
+1. If we only use one icon, inline SVG is genuinely fine — skip the library.
+
+---
+
+#### Local preview server
+
+**The job**: serve the landing page at `http://localhost:something` so we can preview it like a real website while editing.
+
+**Options considered**:
+- **`npx serve`** ← chosen. No install, uses tools we already have (npx comes with Node), one command.
+- VS Code / Cursor Live Server extension. Auto-refreshes on save. Use this if Cursor has the extension.
+- `http-server` (npm package). Older, reliable. `npm install -g http-server`.
+
+**Things to know**:
+1. Default port is 3000; picks next free port if taken.
+2. Ctrl+C in terminal stops the server.
+3. Hard refresh (Ctrl+Shift+R) if changes don't show due to browser caching.
+
+---
+
+#### Version control
+
+**The job**: track code changes over time, back up somewhere other than the laptop, share with reviewers.
+
+**Options considered**:
+- **Git + GitHub** ← chosen. Required by the task. Universal in tech; daily reviews mean the Dograh team will look at diffs and commits.
+- Git + GitLab. Same idea, different company. Free CI/CD included.
+- Git + Bitbucket. Same idea, owned by Atlassian, integrates with Jira.
+
+**Things to know**:
+1. `.gitignore` matters a lot. Never commit `node_modules/`, `.env`, `dist/`, or IDE folders.
+2. Commit messages should be short and descriptive.
+3. Push after each meaningful chunk — never let a day's work sit on just your laptop.
+4. If you accidentally commit a secret, rotate the key immediately — it's in Git history forever.
+
+---
+
+#### Static site hosting
+
+**The job**: put the landing page on the internet at a free URL.
+
+**Options considered**:
+- **GitHub Pages** ← chosen. Free, no separate account/dashboard, deploys from the same repo. One-click enable in Settings.
+- Netlify. More features (forms, redirects, preview deployments). Free tier generous. Separate account.
+- Vercel. Best-in-class for Next.js/React. Separate account.
+
+**Things to know**:
+1. First deploy takes a few minutes to propagate.
+2. URL format is `https://<username>.github.io/<repo>/` — links within the page should account for the repo-name prefix.
+3. Only serves static files (no server-side code). Fine for our use.
+
+---
+
+#### Binary hosting
+
+**The job**: host the compiled `.exe` (~150 MB) somewhere with a stable URL. Can't commit that to Git — bloats the repo forever.
+
+**Options considered**:
+- **GitHub Releases** ← chosen. Free, up to 2 GB per file, versioned (v0.1, v0.2, v1.0 all downloadable), integrated with the repo. Users trust GitHub URLs.
+- AWS S3 / Cloudflare R2 / DigitalOcean Spaces. Cloud file storage. Cheap but needs setup and a credit card.
+- Google Drive / Dropbox share links. Works but download experience is awkward (goes through a file-sharing UI first).
+
+**Things to know**:
+1. Each release has a URL with the version tag. Either update the landing page every release OR use GitHub's `/releases/latest/download/<filename>` pattern (auto-redirects to latest).
+2. Per-file limit is 2 GB — we're way under.
+3. Can mark releases as pre-release / draft for testing before making public.
+
+---
+
+## 7. Roadmap: v0 → v3
+
+Four versions. Each is a **shippable milestone** — a version I could point at and say "this works now." Each breaks into sub-steps that fit in **separate Cursor / Claude Code terminal sessions**, so context stays clean and I can back out of a mistake without scrolling through a mega-chat.
+
+### v0 — "Does the pipe work?"
+
+**Goal**: prove end-to-end that an Electron app can go from a button click → mic → Deepgram → text on screen.
+
+**Deliverable**: minimal Electron app with one window and one "Record 10–20 seconds" button. Click button, speak, transcript appears in the window.
+
+No cleanup. No injection. No hotkey. No UI polish. Just proving the raw pipe.
+
+**Estimate**: 1 day.
+**Terminals**: 1.
+
+**Sub-steps**:
+1. Install Node.js 20 LTS (with the "Automatically install the necessary tools" checkbox for native module builds).
+2. `npm init -y` and install: `electron`, `@deepgram/sdk`, `dotenv`.
+3. Create the minimal Electron shell: `main.js` (main process), `index.html` (renderer UI), `preload.js` (safe IPC bridge).
+4. Wire up: renderer captures audio via `getUserMedia` → sends audio chunks to main via IPC → main calls Deepgram (using API key from `.env`) → main sends transcript back to renderer via IPC → renderer displays it.
+
+**Libraries introduced**: `electron`, `@deepgram/sdk`, `dotenv`.
+
+**Understanding checkpoint**: I can explain the difference between Electron's main and renderer processes, what `preload.js` is for (security bridge), and why we don't hardcode the API key.
+
+---
+
+### v1 — "Does it feel like Wispr Flow?"
+
+**Goal**: the actual Wispr mechanic. Hold `Ctrl+Shift` → speak → release → cleaned text appears in whatever app was focused.
+
+**Deliverable**: still just the minimal window (no polish), but functionally the app already works — global hotkey, streaming Deepgram, Groq cleanup, paste into focused app.
+
+**Estimate**: 2–2.5 days.
+**Terminals**: 3 — one per sub-step, fresh chat each time.
+
+**Sub-steps**:
+1. Add Groq cleanup (in main, via `groq-sdk`) + text injection (Electron `clipboard` + `nut-js`, also in main). Still using the record button. All API calls and keys stay in main; renderer just forwards audio and receives display text.
+   - **Risk step**: this is where `nut-js` gets installed. If native build fails, we swap to `keysender`.
+2. Switch from "record 10–20 sec on button click" to real-time streaming via Deepgram's live endpoint.
+3. Replace the button with global hotkey (hold-to-record via `uiohook-napi`).
+
+**Libraries introduced**: `groq-sdk`, `@nut-tree/nut-js` (or `keysender`), `uiohook-napi`.
+
+**Understanding checkpoint**: I can explain (a) the difference between batch and streaming transcription, (b) why we paste instead of typing, and (c) why the hotkey listener needs a special native module instead of Electron's built-in `globalShortcut`.
+
+---
+
+### v2 — "Does it look and behave like a real product?"
+
+**Goal**: someone else could use it without me watching. Real background app.
+
+**Deliverable**: tray icon, settings window, floating recording pill, error handling, 3-screen first-launch onboarding.
+
+**Estimate**: 2.5 days.
+**Terminals**: 3 — one per sub-step.
+
+**Sub-steps**:
+1. Tray icon (Electron `Tray`) + settings window (BrowserWindow with HTML form: paste API keys, pick hotkey, save via `electron-store`).
+2. Floating recording pill (BrowserWindow with `frame:false, transparent:true, alwaysOnTop:true`, positioned bottom-center of primary display). Shows during recording.
+3. Error handling (mic permission denied, no internet, invalid API key, no focused text field) + 3-screen first-launch onboarding covering the permissions flow (paste API keys → test mic with visual bars, which triggers the Windows mic permission prompt → test hotkey with visual key highlight) + visual polish.
+
+**Libraries introduced**: `electron-store`.
+
+**Understanding checkpoint**: I can demo the app to someone unfamiliar with it, and it behaves gracefully in each edge case I've tested.
+
+---
+
+### v3 — "Can strangers download and use it?"
+
+**Goal**: someone on the internet can download the app and run it.
+
+**Deliverable**: `.exe` installer on GitHub Releases + simple landing page live on GitHub Pages with a working download button.
+
+**Estimate**: 1.5 days.
+**Terminals**: 2 — one per sub-step.
+
+**Sub-steps**:
+1. Configure `electron-builder` in `package.json`. Build the Windows installer. Test on a machine without Node installed. Upload to a GitHub Release.
+2. Build the landing page (`index.html` + Tailwind via CDN + Google Fonts). Deploy to GitHub Pages. Wire the download button to the Release URL.
+
+**Libraries introduced**: `electron-builder` (build-time only, not shipped inside the app).
+
+**Understanding checkpoint**: I can explain what electron-builder does under the hood (bundles Chromium + Node + our code into one installer), what GitHub Pages serves vs. where the `.exe` actually lives (Releases), and what happens between clicking Download and getting a file.
+
+---
+
+### Total estimate
+
+**~7–9 working days end to end**.
+
+---
+
+## 8. Repository structure
+
+_(Sketch — refined as we build.)_
+
+```
+voice-dictation-app/
+├── README.md               # user-facing: what it is, install, usage
+├── PROJECT_NOTES.md        # this file
+├── package.json            # Node dependencies + electron-builder config + scripts
+├── package-lock.json       # exact versions (auto-generated, commit this)
+├── .gitignore              # ignores .env, node_modules/, dist/, out/
+├── .env.example            # template showing required env vars (safe to commit)
+├── main.js                 # Electron main process entry point
+├── preload.js              # secure bridge between main and renderer
+├── src/
+│   ├── main/
+│   │   ├── hotkey.js       # uiohook-napi hold-pattern listener
+│   │   ├── inject.js       # clipboard + nut-js paste
+│   │   ├── tray.js         # tray icon setup
+│   │   └── settings.js     # electron-store read/write
+│   └── renderer/
+│       ├── index.html      # main/settings window
+│       ├── pill.html       # floating recording pill window
+│       ├── renderer.js     # UI logic: audio capture, Deepgram, Groq
+│       └── styles.css
+├── assets/
+│   ├── icon.ico            # app icon
+│   ├── tray-icon.png
+│   └── tray-icon-active.png
+└── landing/                # or separate repo — decide in v3
+    └── index.html
+```
+
+---
+
+## 9. Local development setup
+
+_(Filled in during v0. Placeholder for exact commands.)_
+
+---
+
+## 10. Decision log
+
+Running record of choices and their reasons.
+
+| Date | Decision | Reason |
+|---|---|---|
+| 2026-08-17 | Target Windows (not Mac) | It's the machine I have |
+| 2026-08-17 | *(superseded)* Python as the app language | See below — switched to Electron |
+| 2026-08-17 | **Node.js + Electron as the app runtime** | What real desktop apps use (VS Code, Slack, Discord, Cursor). Better skill transfer, HTML/CSS/JS is broadly known, Node ecosystem is mature. Accepted trade-offs: bigger `.exe` (~150 MB), longer setup, native modules for hotkey + text injection |
+| 2026-08-17 | Deepgram for STT | Required by the task |
+| 2026-08-17 | Groq for LLM cleanup | Fastest inference (matters for latency), free tier |
+| 2026-08-17 | Paste-based injection (not typing simulation) | Instant appearance, matches Wispr Flow feel |
+| 2026-08-17 | Minimal landing page | Task says "simple webpage" — taken literally |
+| 2026-08-17 | Roadmap in v0 → v3 shape | Each version is a shippable milestone; sub-steps fit in separate Cursor terminals |
+| 2026-08-17 | Work in separate terminals per sub-step | Fresh Claude Code context each time — prevents one giant chat, easier to back out of mistakes |
+| 2026-08-17 | Default hotkey `Ctrl + Shift` | Confirmed from Wispr Flow onboarding screenshots — matches user expectation |
+| 2026-08-17 | Recording pill positioned at fixed bottom-center | Matches Wispr Flow. Simpler than tracking cursor |
+| 2026-08-17 | v2 onboarding is 3 screens, not 15 | Wispr's onboarding is a full product-marketing funnel. Ours only needs: paste keys → test mic → test hotkey |
+| 2026-08-17 | Scope locked to core dictation only | Wispr Flow has 8 sidebar features. We rebuild only Dictation |
+| 2026-08-17 | `uiohook-napi` for the hotkey (not Electron `globalShortcut`) | Built-in `globalShortcut` doesn't distinguish keydown from keyup, so it can't do hold-to-record |
+| 2026-08-17 | `@nut-tree/nut-js` for text injection (with `keysender` as fallback) | Best-maintained modern option. `keysender` reserved as fallback if native build fails |
+| 2026-08-17 | Plain HTML/CSS/JS for app UI (not React yet) | Our UI is tiny — a framework adds tooling for little value. Can swap to React later if we want |
+| 2026-08-17 | `electron-builder` for bundling | More configurable than `electron-forge`, better installer output, better auto-update support later |
+| 2026-08-17 | **API key architecture: keys and all API calls (Deepgram, Groq) live in main process** | Follows Electron security best practice — keys never touch the Chromium renderer. Renderer only captures audio (via Web Audio API) and forwards chunks to main via IPC. Slightly more IPC code, but defensible in review and teaches proper Electron patterns. |
+
+---
+
+## 11. Learning log
+
+One entry per version. Fill in *after* the version is done, in own words. If I can't write it, I don't understand it.
+
+### v0 — "Does the pipe work?"
+_(Empty.)_
+
+### v1 — "Does it feel like Wispr Flow?"
+_(Empty.)_
+
+### v2 — "Does it look and behave like a real product?"
+_(Empty.)_
+
+### v3 — "Can strangers download and use it?"
+_(Empty.)_
+
+---
+
+## 12. Open questions
+
+Things not decided yet:
+
+- **Project name** — deferred. Folder stays as `voice-dictation-app`. Rename whenever a good name shows up.
+- **GitHub repo visibility** — private for now (safer default while it's a work-in-progress). Can flip to public later.
+- **Landing page: same repo or separate repo?** — decide in v3. Same repo is simpler; separate is cleaner if the site grows.
+- **React for the app UI?** — deferred to v2. Plain HTML/CSS/JS is the default for now. If the settings + pill grow more complex than expected, we can swap to React (and match Dograh's stack). Not a blocker for v0 or v1.
+- **Landing page in Next.js instead of plain HTML?** — deferred to v3. Since the app stack is now JavaScript, adding Next.js would be a smaller marginal step than it would have been with Python. If we want the React/Next.js learning experience, v3 is where we'd add it. Costs an extra ~half day.
+
+---
+
+## 13. Future iterations (v4+, out of scope for this project)
+
+Things that would be interesting to add *after* v0–v3 ship successfully. Explicitly NOT part of the current project. Captured here so ideas don't get lost.
+
+Wispr Flow-inspired features that we could layer on later:
+- **In-app dictation history** — list of past dictations you can replay, copy, or re-run.
+- **Notetaker** — a note-taking surface backed by dictation.
+- **Snippets** — reusable phrases you can trigger with a keyword.
+- **Style / Transforms** — rewrite dictations in a specific tone or format.
+- **Dictionary / vocabulary** — custom words the transcription should recognize (e.g., domain jargon, names).
+- **Voice profile / stats** — words per minute, streak, total words.
+- **Multi-language support** — currently English-only; Wispr supports 100+.
+- **Cross-platform** — Mac and Linux support (Electron makes this much easier than Python would have).
+- **Auto-updater** — the app checks GitHub Releases for new versions (electron-builder supports this out of the box).
+
+Rule for these: **do not start any of these until v0–v3 are all shipped and working**. Feature creep is the biggest risk to finishing.
