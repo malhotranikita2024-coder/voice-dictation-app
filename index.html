@@ -2,14 +2,20 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'" />
     <title>Voice Dictation App</title>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <h1>Hello Electron</h1>
-    <p>Bootstrap successful — Electron, Node, and npm are all working.</p>
-    <script>
-      console.log('renderer loaded');
-    </script>
+    <h1>Voice Dictation App</h1>
+    <p>v0 — prove the dictation pipe: mic → Deepgram → transcript.</p>
+
+    <button id="recordButton">Record 10-20 seconds</button>
+    <div id="status"></div>
+
+    <h2>Transcript</h2>
+    <div id="transcript">(nothing yet)</div>
+
+    <script src="renderer.js"></script>
   </body>
 </html>

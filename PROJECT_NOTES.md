@@ -800,7 +800,10 @@ Running record of choices and their reasons.
 One entry per version. Fill in *after* the version is done, in own words. If I can't write it, I don't understand it.
 
 ### v0 — "Does the pipe work?"
-_(Empty.)_
+
+_(Draft — rewrite in my own words.)_
+
+We proved the full loop: click a button in the Electron window, speak, and see the transcribed text appear back in that same window. The key idea is that the app is really two separate programs talking to each other over a message channel (IPC), not one program. The renderer (the part that's just a webpage — HTML/CSS/JS running in a Chromium tab) is the only piece allowed to touch the microphone, because `getUserMedia` and `MediaRecorder` are browser APIs. It records audio, and when I click stop, it packages everything recorded so far into one audio blob and hands it off. The main process (a plain Node.js program with full OS access) is the only piece allowed to hold the Deepgram API key, because anything sent to the renderer is inspectable in DevTools — a secret living there would leak. So preload.js exists purely as a narrow, deliberate doorway between the two: it exposes exactly two functions (`sendAudioChunk` and `onTranscript`) on `window.api` and nothing else, so the renderer can hand off audio and receive text back without ever being able to reach into main's process or vice versa. When main receives the audio buffer, it calls Deepgram's batch transcription endpoint (send the whole recording at once, wait for the full response back) — not the real-time streaming endpoint, since that's deliberately deferred to a later terminal. Once Deepgram returns the transcript, main pushes it back to the renderer via `webContents.send`, and the renderer's listener updates the page. One thing that tripped us up: the page's Content-Security-Policy (`default-src 'self'`) blocks *any* inline code, including inline `<style>` tags, not just inline `<script>` tags — so both the styling and the interactive logic had to live in separate files (`styles.css`, `renderer.js`) referenced by `<link>`/`<script src>` rather than typed directly into the HTML.
 
 ### v1 — "Does it feel like Wispr Flow?"
 _(Empty.)_
