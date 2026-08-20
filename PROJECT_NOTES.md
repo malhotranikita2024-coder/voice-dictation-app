@@ -1,7 +1,7 @@
 # Voice Dictation App — Project Notes
 
 **Status:** Planning
-**Last updated:** 2026-08-17
+**Last updated:** 2026-08-20
 **Owner:** Nikita Malhotra
 
 ---
@@ -19,8 +19,8 @@
 9. [Local development setup](#9-local-development-setup)
 10. [Decision log](#10-decision-log)
 11. [Learning log](#11-learning-log)
-12. [Open questions](#12-open-questions)
-13. [Future iterations](#13-future-iterations-v4-out-of-scope-for-this-project)
+12. [v4 planned features](#12-v4-planned-features)
+13. [Known limitations](#13-known-limitations)
 
 ---
 
@@ -101,7 +101,7 @@ Wispr Flow's onboarding is 5 top-level steps across ~15 sub-screens. Here's ever
 4. **"Test your microphone"** — visual audio-level bars; also triggers the OS microphone permission prompt the first time
 
 **Set Up**
-5. **"Set all the languages you speak"** — language selection (Wispr supports 100+)
+5. **"Set all the languages you speak"** — language selection (multiple languages supported)
 6. **"Test the keyboard shortcut"** — recommends Ctrl+Shift with visual purple key highlight when pressed; includes an **"Edit shortcut"** button so users can rebind
 
 **Learn**
@@ -164,18 +164,28 @@ Wispr's actual landing page (wisprflow.ai) is a full marketing site: dark hero w
 
 **Borrowing the aesthetic, not the content**: dark background, big typographic headline, minimal chrome.
 
-### What Wispr has that we are explicitly **not** building
+### Wispr features outside v0–v3 scope
 
-- Notetaker, Insights, Dictionary, Snippets, Style, Transforms, Scratchpad
-- Voice Profile / user stats
-- Referral system, Pro tier upsell
+**Planned for v4** (see Section 12 for the full spec):
+- Notetaker
+- Insights / stats
+- Dictionary (custom vocabulary via Deepgram `keywords`)
+- Snippets (reusable phrases)
+- Style feature (4 categories × 3–4 styles)
+- Transforms (rewrite as bullets, notes, LinkedIn posts)
+- Voice Profile stats
+- Multi-language support
+- In-app dictation history
+
+**Not currently planned** (Wispr business/marketing surface — not needed for our clone):
+- Scratchpad
+- Referral system
+- Pro tier upsell
 - Typing speed comparison
 - "Next step → open ChatGPT" workflow prompts
-- Multi-language UI (v1/v2 are English-only)
-- In-app dictation history
-- Slack learning demo, personalization
+- Slack learning demo + personalization
 - Social proof / testimonial screens
-- Data collection consent screen
+- Data collection consent screen (moot — we don't collect any data)
 
 ### Permissions flow (what the task calls out)
 
@@ -277,7 +287,7 @@ For each choice: **the job** (what problem it solves), **3–4 options considere
 | Runtime | **Node.js 20 (LTS) + Electron** | v0 |
 | Package manager | **npm** (bundled with Node) | v0 |
 | Audio capture | **Web Audio API (getUserMedia)** in renderer | v0 |
-| Speech-to-text | **Deepgram** — `@deepgram/sdk` (JS) | v0 |
+| Speech-to-text | **Deepgram** — raw `ws` WebSocket client (not the official SDK — see below) | v0, revised v1 |
 | LLM cleanup | **Groq** (llama-3.x) — `groq-sdk` | v1 |
 | Global hotkey (hold pattern) | **uiohook-napi** | v0 → v1 |
 | Text injection | **@nut-tree/nut-js** + Electron's built-in `clipboard` | v1 |
@@ -354,7 +364,7 @@ For each choice: **the job** (what problem it solves), **3–4 options considere
 **The job**: turn audio into text, live, over a streaming connection.
 
 **Options considered**:
-- **Deepgram (`@deepgram/sdk`)** ← chosen. Required by the task. Independently strong: ~300–500 ms latency, accurate, generous free credit for development, clean official JS SDK.
+- **Deepgram** ← chosen. Required by the task. Independently strong: ~300–500 ms latency, accurate, generous free credit for development.
 - OpenAI Whisper (cloud). Very accurate but not truly streaming — worse for live dictation.
 - AssemblyAI. Deepgram's main competitor. Comparable quality and pricing.
 - Google Speech-to-Text. Enterprise-grade; complex setup and billing tied to Google Cloud.
@@ -363,7 +373,7 @@ For each choice: **the job** (what problem it solves), **3–4 options considere
 1. API keys are secrets — never commit. Load from `.env` locally.
 2. Pick a specific model — `nova-2` is Deepgram's current best for streaming English.
 3. Deepgram bills by audio minute. Free credit is generous but not infinite.
-4. Streaming connection can drop mid-recording — SDK auto-reconnects but you need to buffer during the gap.
+4. **We talk to Deepgram's live endpoint with the raw `ws` library, not the official `@deepgram/sdk`.** v0's batch transcription used `@deepgram/sdk` fine, but when we moved to live streaming in v1 (Terminal 4), the SDK's `deepgram.listen.v1.connect()` wrapper silently failed to ever open a WebSocket when run inside Electron's main process — no error, no close event, nothing, just a socket stuck unopened forever. Confirmed via isolated tests that the *identical* URL, headers, and API key connect instantly with the plain `ws` package, both in plain Node and inside Electron's main process — so the bug is inside the SDK's connection-setup code specifically, not our network/auth/environment. We removed `@deepgram/sdk` from `package.json` and now build the `wss://api.deepgram.com/v1/listen` URL and `Authorization: Token <key>` header ourselves with `ws` directly. Worth knowing before reaching for the SDK's live client again.
 
 ---
 
@@ -792,21 +802,32 @@ Running record of choices and their reasons.
 | 2026-08-17 | Plain HTML/CSS/JS for app UI (not React yet) | Our UI is tiny — a framework adds tooling for little value. Can swap to React later if we want |
 | 2026-08-17 | `electron-builder` for bundling | More configurable than `electron-forge`, better installer output, better auto-update support later |
 | 2026-08-17 | **API key architecture: keys and all API calls (Deepgram, Groq) live in main process** | Follows Electron security best practice — keys never touch the Chromium renderer. Renderer only captures audio (via Web Audio API) and forwards chunks to main via IPC. Slightly more IPC code, but defensible in review and teaches proper Electron patterns. |
+| 2026-08-20 | Switched from `@deepgram/sdk`'s live client to the raw `ws` library for streaming, and removed the SDK dependency entirely | `deepgram.listen.v1.connect()` never opened a working WebSocket inside Electron's main process (no error, no data, nothing) — confirmed via isolated tests that the identical URL/headers/key work instantly with plain `ws`, both in bare Node and inside Electron. Root cause inside the SDK itself was never fully pinned down; bypassing it was faster and more reliable than continuing to reverse-engineer a third-party bug. See Section 6 and Section 11 (v1 learning log) for the full story. |
+| 2026-08-20 | Tightened the Groq cleanup prompt to forbid word substitution, with a narrow exception for resolving explicitly-flagged verbal self-corrections | Testing showed Groq would occasionally "fix" a Deepgram mishearing by swapping in a different word, silently changing meaning. Logging the raw pre-Groq transcript proved most perceived "Groq errors" were actually Deepgram mishearings that Groq was smoothing over. See Section 11 and Section 13. |
 
 ---
 
 ## 11. Learning log
 
-One entry per version. Fill in *after* the version is done, in own words. If I can't write it, I don't understand it.
+One entry per version. Fill in *after* the version is done.
 
 ### v0 — "Does the pipe work?"
 
-_(Draft — rewrite in my own words.)_
+_(Draft )_
 
 We proved the full loop: click a button in the Electron window, speak, and see the transcribed text appear back in that same window. The key idea is that the app is really two separate programs talking to each other over a message channel (IPC), not one program. The renderer (the part that's just a webpage — HTML/CSS/JS running in a Chromium tab) is the only piece allowed to touch the microphone, because `getUserMedia` and `MediaRecorder` are browser APIs. It records audio, and when I click stop, it packages everything recorded so far into one audio blob and hands it off. The main process (a plain Node.js program with full OS access) is the only piece allowed to hold the Deepgram API key, because anything sent to the renderer is inspectable in DevTools — a secret living there would leak. So preload.js exists purely as a narrow, deliberate doorway between the two: it exposes exactly two functions (`sendAudioChunk` and `onTranscript`) on `window.api` and nothing else, so the renderer can hand off audio and receive text back without ever being able to reach into main's process or vice versa. When main receives the audio buffer, it calls Deepgram's batch transcription endpoint (send the whole recording at once, wait for the full response back) — not the real-time streaming endpoint, since that's deliberately deferred to a later terminal. Once Deepgram returns the transcript, main pushes it back to the renderer via `webContents.send`, and the renderer's listener updates the page. One thing that tripped us up: the page's Content-Security-Policy (`default-src 'self'`) blocks *any* inline code, including inline `<style>` tags, not just inline `<script>` tags — so both the styling and the interactive logic had to live in separate files (`styles.css`, `renderer.js`) referenced by `<link>`/`<script src>` rather than typed directly into the HTML.
 
 ### v1 — "Does it feel like Wispr Flow?"
-_(Empty.)_
+
+Terminal 4's job was closing the gap between "it works" and "it feels instant." Going into this session, v0/Terminal 3 already recorded the whole clip with `MediaRecorder`, waited for the mic to stop, shipped the entire compressed `webm/opus` blob to Deepgram's batch endpoint, and waited for one full response back — that round trip was the 2-4 second pause after every recording. The fix was to stop treating "record" and "transcribe" as two sequential steps and start streaming audio to Deepgram *while the user is still talking*, so that by the time they stop, almost the whole transcript is already sitting in memory and all that's left is a short flush.
+
+Two things had to change together for that to work. First, the renderer couldn't keep using `MediaRecorder`, because it only hands you a finished file after you call `.stop()` — there's no way to get audio out of it mid-recording. We switched to the `Web Audio API` with a custom `AudioWorkletProcessor` (`pcm-worklet-processor.js`), which runs on the audio thread, converts the raw `Float32` mic samples to 16-bit PCM (the exact format Deepgram's live endpoint wants), batches them into ~250ms chunks, and posts each chunk back to the renderer's main thread the moment it's ready — so audio starts flowing out over IPC within a quarter-second of speaking, not at the end. One non-obvious gotcha: a worklet with no path to the audio destination often never gets its `process()` called by Chromium's audio graph at all, so we route it through a silent (zero-gain) node to the speakers rather than leaving it dangling.
+
+Second, `main.js` had to hold a live connection open instead of making one-shot calls. This is where the real surprise of the session happened: the official `@deepgram/sdk`'s live-streaming wrapper (`deepgram.listen.v1.connect()`) simply never worked inside Electron's main process — it returned what looked like a valid socket object, but no `open`, `error`, or `close` event ever fired, audio chunks were silently dropped, and Deepgram's own dashboard showed zero requests received. No exception, no crash, nothing to grep for. Tracking it down took building a chain of isolated tests outside the SDK: the exact same URL, headers, and API key connected *instantly* using the plain `ws` library — both in a bare Node script and inside Electron's own main process via `app.whenReady()`. That proved the network, the key, and Electron itself were all fine, and narrowed the failure down to something inside the SDK's own connection-setup code that we never fully root-caused (best guess: an unhandled rejection somewhere in its internal reconnect-and-retry promise chain, since we could never get it to even construct the underlying WebSocket instance). Rather than keep reverse-engineering a third-party bug, we removed `@deepgram/sdk` entirely and talk to `wss://api.deepgram.com/v1/listen` directly with `ws`, sending raw PCM as binary frames and `{"type": "Finalize"}` / `{"type": "CloseStream"}` as JSON control messages on stop. The lesson: when a library's abstraction behaves inexplicably, testing the same thing one layer down (the raw protocol/library it wraps) is often faster than reading its source top-to-bottom.
+
+The other real finding this session was that "the transcript changed" during testing was almost never Groq's fault. The Groq cleanup prompt was originally loose ("preserve meaning and tone exactly"), and testing turned up cases where it would quietly swap a word it found grammatically odd for a more natural-sounding one (Deepgram mis-transcribed "bump the pool size" as "pump the pool size"; Groq "fixed" that to "increase the pool size" — a real, silent content change). We logged the raw Deepgram transcript right before it goes to Groq specifically to settle this, and it turned out the overwhelming majority of "wrong" output was Deepgram itself mishearing words (numbers, uncommon names, and words that sound alike), which Groq was then confidently smoothing into fluent-sounding wrong sentences. Tightening the prompt to explicitly forbid substituting any word — only punctuation, capitalization, filler removal, and (as a scoped fourth rule) collapsing explicitly-flagged verbal self-corrections like "no wait, actually X" down to just the corrected version — fixed the Groq-side drift entirely and made the remaining Deepgram accuracy limits visible instead of masked. Those accuracy limits (uncommon proper nouns, stacked rapid-fire corrections, the 15s recording cap) are real and are logged in Section 13 rather than chased further this session, each mapped to the future feature that actually addresses it.
+
+Net result: release-to-paste now feels close to instant instead of laggy, and the cleanup step is honest about what it changes.
 
 ### v2 — "Does it look and behave like a real product?"
 _(Empty.)_
@@ -816,31 +837,50 @@ _(Empty.)_
 
 ---
 
-## 12. Open questions
+## 12. v4 planned features
 
-Things not decided yet:
-
-- **Project name** — deferred. Folder stays as `voice-dictation-app`. Rename whenever a good name shows up.
-- **GitHub repo visibility** — private for now (safer default while it's a work-in-progress). Can flip to public later.
-- **Landing page: same repo or separate repo?** — decide in v3. Same repo is simpler; separate is cleaner if the site grows.
-- **React for the app UI?** — deferred to v2. Plain HTML/CSS/JS is the default for now. If the settings + pill grow more complex than expected, we can swap to React (and match Dograh's stack). Not a blocker for v0 or v1.
-- **Landing page in Next.js instead of plain HTML?** — deferred to v3. Since the app stack is now JavaScript, adding Next.js would be a smaller marginal step than it would have been with Python. If we want the React/Next.js learning experience, v3 is where we'd add it. Costs an extra ~half day.
-
----
-
-## 13. Future iterations (v4+, out of scope for this project)
-
-Things that would be interesting to add *after* v0–v3 ship successfully. Explicitly NOT part of the current project. Captured here so ideas don't get lost.
+Features planned for v4, built on top of the shipped v0–v3 clone. Captured with enough detail to design and implement later.
 
 Wispr Flow-inspired features that we could layer on later:
 - **In-app dictation history** — list of past dictations you can replay, copy, or re-run.
 - **Notetaker** — a note-taking surface backed by dictation.
 - **Snippets** — reusable phrases you can trigger with a keyword.
-- **Style / Transforms** — rewrite dictations in a specific tone or format.
+- **Style feature (v4 target)** — matches Wispr Flow's Style onboarding pattern: **4 categories × 3 styles**.
+  - **Categories**: Personal messages (WhatsApp, Telegram, Discord, Instagram) / Work messages (Slack, Teams, LinkedIn) / Emails (Gmail, Outlook, Superhuman, Apple Mail) / Other apps (Linear, ChatGPT, Notes)
+  - **Styles**: Formal (Caps + Punctuation) / Casual (Caps + Less punctuation) / Very casual (No caps + less punctuation) / Excited! (More exclamations — for work / email / other only)
+  - **Mechanic**: `active-win` detects target app at paste time → app-to-category lookup table → user's chosen style for that category → matching Groq prompt variant → cleaned text pastes with that style
+  - **UI**: 4-screen onboarding style picker with sample messages per style (matches Wispr's visual pattern) + settings screen to change picks later
+  - **Storage**: preferences saved in electron-store as `{ personal: "very_casual", work: "casual", email: "formal", other: "casual" }`
+  - **Estimated effort**: ~2 solid days (12–15 hrs) — biggest chunk is the 4-screen onboarding UI
+- **Transforms** — rewrite finished dictations in a specific format (bullet list, meeting notes, LinkedIn post, etc.). Separate from Style; Wispr has this as a sidebar feature.
 - **Dictionary / vocabulary** — custom words the transcription should recognize (e.g., domain jargon, names).
 - **Voice profile / stats** — words per minute, streak, total words.
-- **Multi-language support** — currently English-only; Wispr supports 100+.
+- **Multi-language support** — currently English-only; expand beyond English later.
 - **Cross-platform** — Mac and Linux support (Electron makes this much easier than Python would have).
 - **Auto-updater** — the app checks GitHub Releases for new versions (electron-builder supports this out of the box).
 
 Rule for these: **do not start any of these until v0–v3 are all shipped and working**. Feature creep is the biggest risk to finishing.
+
+---
+
+## 13. Known limitations
+
+Limitations observed during builds, mapped to the future version that addresses each. Prevents wasted time re-investigating structural limits, and keeps v4+ features motivated by real problems.
+
+### Uncommon proper-noun mis-transcription
+- **Observed during:** v1 (Terminal 4 — streaming + Groq cleanup testing)
+- **Symptom:** Deepgram mis-transcribes less-common names. Examples encountered: "Priya" → "Rhea" / "Andrea" / "Karen"; "Rohan" → "Roman"
+- **Cause:** Deepgram's general model is trained on English audio and biases toward common English words. Not fixable via Groq prompt tuning — the raw transcript itself is wrong before it reaches cleanup.
+- **Real fix:** **v4 Dictionary feature** — pass user's frequent names/jargon as Deepgram `keywords` parameter on each streaming call, boosting recognition. Users manage the vocab list via settings.
+
+### Adversarial stacked self-corrections partially resolve
+- **Observed during:** v1 (Terminal 4 — self-correction cleanup testing)
+- **Symptom:** Simple 1–2 corrections clean up perfectly ("send to Tina, no wait Priya" → "Send to Priya"). But 3+ rapid corrections stacked back-to-back (e.g., "3PM, actually 4PM, and loop in Rhea, actually Rohan, actually no...") may leave partial mess in the pasted result.
+- **Cause:** Inherent limit of doing correction cleanup as a single after-the-fact LLM pass. When the raw transcript itself doesn't clearly separate retracted vs. corrected content, Groq can't reliably untangle it either. Cannot be fixed via more prompt tuning.
+- **Real fix:** **v4+ Live editing feature** — types text as user speaks (using Deepgram interim results), then deletes and retypes when corrections are detected. Matches Wispr Flow's approach. Requires architecture rework: interim streaming ON, continuous typing (not paste-once), backspace simulation, cursor tracking. Only makes sense once the hotkey + pill UI are in place.
+
+### 15-second recording auto-stop
+- **Observed during:** v1 (Terminal 3–4 — testing longer dictations)
+- **Symptom:** Recording cuts off after 15 seconds even mid-sentence (constant `RECORDING_SECONDS = 15` in `renderer.js`).
+- **Cause:** Deliberate placeholder while we're using the Record button flow. Not a bug, just a scaffolding choice.
+- **Real fix:** **v1 Terminal 5 (global hotkey)** — replaces auto-stop with "record until user releases the hotkey." Removes the time limit entirely.

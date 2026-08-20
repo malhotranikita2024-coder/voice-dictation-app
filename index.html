@@ -8,13 +8,11 @@
   </head>
   <body>
     <h1>Voice Dictation App</h1>
-    <p>v0 — prove the dictation pipe: mic → Deepgram → transcript.</p>
+    <p>v1 — record, clean up with Groq, paste into whatever app has focus.</p>
 
     <button id="recordButton">Record 10-20 seconds</button>
+    <p>After clicking Record, you have 2 seconds to Alt+Tab to the app you want to dictate into. Recording auto-stops after 15 seconds — no need to click back into this window.</p>
     <div id="status"></div>
-
-    <h2>Transcript</h2>
-    <div id="transcript">(nothing yet)</div>
 
     <script src="renderer.js"></script>
   </body>
