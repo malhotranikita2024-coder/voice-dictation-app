@@ -1,30 +1,12 @@
 const recordButton = document.getElementById('recordButton');
 const statusEl = document.getElementById('status');
 
-const RECORDING_SECONDS = 15;
-
 let mediaStream;
 let audioContext;
 let workletNode;
 let sourceNode;
 let silentGainNode;
 let isRecording = false;
-
-function countdown(seconds) {
-  return new Promise((resolve) => {
-    let remaining = seconds;
-    statusEl.textContent = `Starting in ${remaining}... Alt+Tab to your target app now`;
-    const timer = setInterval(() => {
-      remaining -= 1;
-      if (remaining <= 0) {
-        clearInterval(timer);
-        resolve();
-      } else {
-        statusEl.textContent = `Starting in ${remaining}... Alt+Tab to your target app now`;
-      }
-    }, 1000);
-  });
-}
 
 async function startRecording() {
   window.api.startRecording();
@@ -49,20 +31,7 @@ async function startRecording() {
   silentGainNode.connect(audioContext.destination);
 
   isRecording = true;
-  statusEl.textContent = `Recording... speak now (auto-stops in ${RECORDING_SECONDS}s)`;
-
-  let remaining = RECORDING_SECONDS;
-  const recordTimer = setInterval(() => {
-    remaining -= 1;
-    if (remaining > 0) {
-      statusEl.textContent = `Recording... speak now (auto-stops in ${remaining}s)`;
-    }
-  }, 1000);
-
-  setTimeout(() => {
-    clearInterval(recordTimer);
-    stopRecording();
-  }, RECORDING_SECONDS * 1000);
+  statusEl.textContent = 'Recording... speak now (release Ctrl+Shift, or click the button, when done)';
 }
 
 function stopRecording() {
@@ -75,17 +44,33 @@ function stopRecording() {
 
   window.api.stopRecording();
   isRecording = false;
+  // Disable until main finishes the Deepgram/Groq/paste pipeline (onStatus
+  // re-enables on Done/Error/No speech) so a new recording can't interrupt it.
+  recordButton.disabled = true;
 }
 
 recordButton.addEventListener('click', async () => {
-  if (isRecording) return;
+  if (isRecording) {
+    stopRecording();
+    return;
+  }
 
-  recordButton.disabled = true;
-  await countdown(2);
   await startRecording().catch((err) => {
     statusEl.textContent = `Mic error: ${err.message}`;
     recordButton.disabled = false;
   });
+});
+
+window.api.onRecordingStart(() => {
+  if (isRecording) return;
+  startRecording().catch((err) => {
+    statusEl.textContent = `Mic error: ${err.message}`;
+  });
+});
+
+window.api.onRecordingStop(() => {
+  if (!isRecording) return;
+  stopRecording();
 });
 
 window.api.onStatus((text) => {

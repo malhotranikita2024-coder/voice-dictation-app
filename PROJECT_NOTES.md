@@ -829,6 +829,20 @@ The other real finding this session was that "the transcript changed" during tes
 
 Net result: release-to-paste now feels close to instant instead of laggy, and the cleanup step is honest about what it changes.
 
+### v1 Session 3 — global hotkey
+
+_(Draft)_
+
+Terminal 5's job was replacing the last piece of scaffolding from v0: the Record button, its 2-second Alt+Tab countdown, and the 15-second auto-stop. All three existed only because we didn't have a way to detect a keypress *outside* our own window yet. `uiohook-napi` fixes that — it installs a system-level keyboard hook that reports every keydown/keyup on the whole machine, not just events aimed at our BrowserWindow, and (importantly) it's a *passive* listener rather than one that intercepts and can swallow input. That distinction is what let us stop worrying about breaking other apps' shortcuts: Ctrl+Shift+T still reopens a closed tab in the browser exactly as before, because our hook only ever observes the event, never consumes it — Windows still delivers it to the focused app normally.
+
+The actual detection logic is a small state machine, not a single "is Ctrl+Shift pressed" check: two booleans (`ctrlDown`, `shiftDown`) track each modifier independently, and a third flag (`hotkeyActive`) tracks whether we've already told the renderer to start recording for the current hold. We only fire the start signal on the specific transition from "not both down" to "both down," which is what makes the flagged edge case safe — if the user is already holding Ctrl+Shift for some unrelated reason when the app launches, `uiohook-napi` never emits a keydown for keys that were already down before it started listening, so `hotkeyActive` never flips and nothing fires. We confirmed this behavior directly: simulating raw OS-level key-down events with `keybd_event` (via a small PowerShell/P-Invoke script, since there's no way to physically hold a key from a terminal) while the app was already running showed a clean start-then-stop pair in the console for a normal press, and *silence* — correctly — when the same simulated hold was already in effect before the app's listener started.
+
+The other change worth noting is what got deleted, not added. Once the hotkey drives `startRecording()`/`stopRecording()` directly, the `RECORDING_SECONDS` timer, the countdown-and-Alt+Tab UI text, and the whole "click first, then switch windows" sequence stopped making sense — they were never the real design, just a stand-in for not having a global listener yet. The Record button stays as a manual fallback (click to start, click again to stop) so the app can still be exercised without the hotkey, e.g. for debugging.
+
+Compared to the old flow, the qualitative difference is that the app now disappears. Click → wait 2 seconds → switch windows → talk fast before the clock runs out was a workflow that kept reminding you a program was involved. Hold-to-record while already looking at Notepad or Slack removes every one of those seams — nothing to click, nothing to switch to, no clock. That's the whole reason Wispr Flow chose this interaction in the first place, and it's the first time this project has actually felt like using it rather than testing it.
+
+**Live test result:** confirmed working in Notepad — hold Ctrl+Shift without ever clicking into the app window, speak, release, cleaned text pastes. Rated 8/10 for this session. A dictation-quality issue surfaced during testing (separate from the hotkey mechanism itself, which fired correctly every time); parked for a future session rather than investigated here, since this session's scope was the trigger mechanism, not transcription/cleanup accuracy.
+
 ### v2 — "Does it look and behave like a real product?"
 _(Empty.)_
 
@@ -867,6 +881,12 @@ Rule for these: **do not start any of these until v0–v3 are all shipped and wo
 
 Limitations observed during builds, mapped to the future version that addresses each. Prevents wasted time re-investigating structural limits, and keeps v4+ features motivated by real problems.
 
+### Dictation quality issue observed during hotkey testing (unconfirmed cause)
+- **Observed during:** v1 (Terminal 5 — global hotkey live testing)
+- **Symptom:** Not yet characterized in detail — surfaced during Ctrl+Shift hold-to-record testing in Notepad. The hotkey mechanism itself fired correctly every time; the issue is somewhere downstream (transcription accuracy or cleanup), not the trigger.
+- **Cause:** Unknown — deliberately parked rather than investigated this session, since Terminal 5's scope was the hotkey trigger, not transcription/cleanup quality. May turn out to be the same class of issue as the entry below (proper-noun mis-transcription) or something distinct.
+- **Real fix:** TBD — needs reproduction with a specific example transcript before it can be diagnosed and mapped to a fix.
+
 ### Uncommon proper-noun mis-transcription
 - **Observed during:** v1 (Terminal 4 — streaming + Groq cleanup testing)
 - **Symptom:** Deepgram mis-transcribes less-common names. Examples encountered: "Priya" → "Rhea" / "Andrea" / "Karen"; "Rohan" → "Roman"
@@ -879,8 +899,8 @@ Limitations observed during builds, mapped to the future version that addresses 
 - **Cause:** Inherent limit of doing correction cleanup as a single after-the-fact LLM pass. When the raw transcript itself doesn't clearly separate retracted vs. corrected content, Groq can't reliably untangle it either. Cannot be fixed via more prompt tuning.
 - **Real fix:** **v4+ Live editing feature** — types text as user speaks (using Deepgram interim results), then deletes and retypes when corrections are detected. Matches Wispr Flow's approach. Requires architecture rework: interim streaming ON, continuous typing (not paste-once), backspace simulation, cursor tracking. Only makes sense once the hotkey + pill UI are in place.
 
-### 15-second recording auto-stop
+### 15-second recording auto-stop — FIXED (v1 Terminal 5)
 - **Observed during:** v1 (Terminal 3–4 — testing longer dictations)
 - **Symptom:** Recording cuts off after 15 seconds even mid-sentence (constant `RECORDING_SECONDS = 15` in `renderer.js`).
 - **Cause:** Deliberate placeholder while we're using the Record button flow. Not a bug, just a scaffolding choice.
-- **Real fix:** **v1 Terminal 5 (global hotkey)** — replaces auto-stop with "record until user releases the hotkey." Removes the time limit entirely.
+- **Fix:** Terminal 5 replaced the button-driven flow with a global `Ctrl+Shift` hold-to-record hotkey (`uiohook-napi`, wired through new `hotkey:start-recording`/`hotkey:stop-recording` IPC channels). Recording now runs until the hotkey is released — the `RECORDING_SECONDS` constant, its countdown, and the 2-second Alt+Tab dance were removed entirely. See Section 11 learning log for the transition-based detection logic.

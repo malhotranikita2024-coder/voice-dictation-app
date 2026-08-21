@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
 const path = require('node:path');
 const WebSocket = require('ws');
 const Groq = require('groq-sdk');
+const { uIOhook, UiohookKey } = require('uiohook-napi');
 const { pasteText } = require('./src/main/inject');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -43,15 +44,55 @@ function createWindow() {
   mainWindow.loadFile('index.html');
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  uIOhook.start();
+});
 
 app.on('window-all-closed', () => {
   app.quit();
 });
 
+app.on('will-quit', () => {
+  uIOhook.stop();
+});
+
 function sendStatus(text) {
   mainWindow.webContents.send('status', text);
 }
+
+// Global hotkey: hold Ctrl+Shift anywhere in Windows to record.
+// uiohook-napi is a passive OS-level listener (it observes key events, it
+// doesn't consume them), so normal shortcuts like Ctrl+Shift+T still work
+// in whatever app is focused — we just also see the events.
+let ctrlDown = false;
+let shiftDown = false;
+let hotkeyActive = false;
+
+const isCtrlKey = (code) => code === UiohookKey.Ctrl || code === UiohookKey.CtrlRight;
+const isShiftKey = (code) => code === UiohookKey.Shift || code === UiohookKey.ShiftRight;
+
+uIOhook.on('keydown', (e) => {
+  if (isCtrlKey(e.keycode)) ctrlDown = true;
+  else if (isShiftKey(e.keycode)) shiftDown = true;
+
+  // Only fire on the up -> down transition, so keys already held when the
+  // app starts don't immediately trigger a recording.
+  if (ctrlDown && shiftDown && !hotkeyActive) {
+    hotkeyActive = true;
+    mainWindow?.webContents.send('hotkey:start-recording');
+  }
+});
+
+uIOhook.on('keyup', (e) => {
+  if (isCtrlKey(e.keycode)) ctrlDown = false;
+  else if (isShiftKey(e.keycode)) shiftDown = false;
+
+  if (hotkeyActive && !(ctrlDown && shiftDown)) {
+    hotkeyActive = false;
+    mainWindow?.webContents.send('hotkey:stop-recording');
+  }
+});
 
 const DEEPGRAM_LIVE_URL =
   'wss://api.deepgram.com/v1/listen?model=nova-2&encoding=linear16&sample_rate=16000&channels=1&smart_format=true&interim_results=false';
