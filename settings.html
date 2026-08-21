@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'" />
+    <title>Settings</title>
+    <link rel="stylesheet" href="settings-styles.css" />
+  </head>
+  <body>
+    <h1>Settings</h1>
+
+    <label for="deepgramKey">Deepgram API key</label>
+    <div class="key-row">
+      <input type="password" id="deepgramKey" autocomplete="off" />
+      <button type="button" class="eye-toggle" data-target="deepgramKey">show</button>
+    </div>
+
+    <label for="groqKey">Groq API key</label>
+    <div class="key-row">
+      <input type="password" id="groqKey" autocomplete="off" />
+      <button type="button" class="eye-toggle" data-target="groqKey">show</button>
+    </div>
+
+    <label>Dictation hotkey</label>
+    <div class="hotkey-row">
+      <span id="hotkeyDisplay" class="hotkey-display"></span>
+      <button type="button" id="changeHotkeyButton">Change</button>
+    </div>
+    <p id="hotkeyHint" class="hint"></p>
+
+    <div class="button-row">
+      <button type="button" id="cancelButton">Cancel</button>
+      <button type="button" id="saveButton">Save</button>
+    </div>
+
+    <script src="settings-renderer.js"></script>
+  </body>
+</html>

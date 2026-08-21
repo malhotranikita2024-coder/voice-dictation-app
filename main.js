@@ -1,13 +1,13 @@
 require('dotenv').config();
 
-const { app, BrowserWindow, ipcMain, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, dialog } = require('electron');
 const path = require('node:path');
 const WebSocket = require('ws');
 const Groq = require('groq-sdk');
 const { uIOhook, UiohookKey } = require('uiohook-napi');
 const { pasteText } = require('./src/main/inject');
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const { loadSettings, saveSettings, migrateFromEnv, hasRequiredKeys } = require('./src/main/settings');
+const { createTray, setTrayRecordingState } = require('./src/main/tray');
 
 const CLEANUP_SYSTEM_PROMPT = `You are a transcript cleanup assistant. The input is a raw speech-to-text transcript that may contain mistakes from the transcription itself — do not try to fix those. You may ONLY do the following:
 1. Fix punctuation and capitalization.
@@ -17,6 +17,7 @@ const CLEANUP_SYSTEM_PROMPT = `You are a transcript cleanup assistant. The input
 Rule 4 applies ONLY to retractions the speaker explicitly flags in speech this way. Outside of a flagged retraction, do NOT substitute, replace, or rephrase any word for another word, even if it seems unusual, awkward, or grammatically odd — leave it exactly as given. Do not add or remove any information or change word choice beyond what rules 1-4 allow. Return ONLY the cleaned text, no explanation or preamble.`;
 
 async function cleanupTranscript(rawText) {
+  const groq = new Groq({ apiKey: loadSettings().groqKey });
   const completion = await groq.chat.completions.create({
     model: 'openai/gpt-oss-20b',
     messages: [
@@ -29,11 +30,20 @@ async function cleanupTranscript(rawText) {
 }
 
 let mainWindow;
+let settingsWindow;
+let isQuitting = false;
 
-function createWindow() {
+function createMainWindow() {
+  // This window is never shown. Audio capture (getUserMedia + AudioWorklet)
+  // only works inside a renderer process, so it still needs to exist and
+  // run index.html/renderer.js — it just no longer has a visible UI role
+  // now that the app lives in the tray. The floating recording pill
+  // (a later session) is the real replacement for this window's UI.
   mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
+    show: false,
+    skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -44,54 +54,170 @@ function createWindow() {
   mainWindow.loadFile('index.html');
 }
 
-app.whenReady().then(() => {
-  createWindow();
-  uIOhook.start();
-});
+function createSettingsWindow() {
+  if (settingsWindow) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
 
-app.on('window-all-closed', () => {
-  app.quit();
-});
+  settingsWindow = new BrowserWindow({
+    width: 500,
+    height: 450,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    alwaysOnTop: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
 
-app.on('will-quit', () => {
-  uIOhook.stop();
-});
+  settingsWindow.setMenuBarVisibility(false);
+  settingsWindow.loadFile('settings.html');
 
-function sendStatus(text) {
-  mainWindow.webContents.send('status', text);
+  // Closing via the X should hide the window, not quit the app. Only the
+  // tray's "Quit" sets isQuitting first, which lets this close for real.
+  settingsWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      settingsWindow.hide();
+    }
+  });
+
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+  });
 }
 
-// Global hotkey: hold Ctrl+Shift anywhere in Windows to record.
-// uiohook-napi is a passive OS-level listener (it observes key events, it
-// doesn't consume them), so normal shortcuts like Ctrl+Shift+T still work
-// in whatever app is focused — we just also see the events.
-let ctrlDown = false;
-let shiftDown = false;
+function showAboutDialog() {
+  dialog.showMessageBox({
+    type: 'info',
+    title: 'About Voice Dictation',
+    message: 'Voice Dictation App',
+    detail: `Version ${app.getVersion()}\nHold your configured hotkey anywhere to dictate.`,
+  });
+}
+
+function sendStatus(text) {
+  mainWindow?.webContents.send('status', text);
+}
+
+// --- Generic hotkey combo engine -------------------------------------
+//
+// A hotkey is stored as a string like "Ctrl+Shift" or "Alt+Space": a
+// "+"-joined list of canonical key names. Canonical names come straight
+// from uiohook-napi's UiohookKey, except that left/right modifier variants
+// (Ctrl/CtrlRight, Shift/ShiftRight, ...) collapse to one shared name, so
+// "either Ctrl key" counts. preload.js's hotkey-capture UI builds combo
+// strings using this exact same vocabulary.
+
+const MODIFIER_CODE_TO_NAME = {
+  [UiohookKey.Ctrl]: 'Ctrl',
+  [UiohookKey.CtrlRight]: 'Ctrl',
+  [UiohookKey.Shift]: 'Shift',
+  [UiohookKey.ShiftRight]: 'Shift',
+  [UiohookKey.Alt]: 'Alt',
+  [UiohookKey.AltRight]: 'Alt',
+  [UiohookKey.Meta]: 'Meta',
+  [UiohookKey.MetaRight]: 'Meta',
+};
+
+const KEYCODE_TO_CANONICAL = { ...MODIFIER_CODE_TO_NAME };
+for (const [name, code] of Object.entries(UiohookKey)) {
+  if (!(code in KEYCODE_TO_CANONICAL)) KEYCODE_TO_CANONICAL[code] = name;
+}
+
+function parseHotkey(hotkeyString) {
+  return new Set(
+    hotkeyString
+      .split('+')
+      .map((part) => part.trim())
+      .filter(Boolean)
+  );
+}
+
+let targetKeys = parseHotkey(loadSettings().hotkey);
+const heldKeys = new Set();
 let hotkeyActive = false;
 
-const isCtrlKey = (code) => code === UiohookKey.Ctrl || code === UiohookKey.CtrlRight;
-const isShiftKey = (code) => code === UiohookKey.Shift || code === UiohookKey.ShiftRight;
+function reloadHotkeyTarget() {
+  targetKeys = parseHotkey(loadSettings().hotkey);
+}
 
+function isTargetCombo() {
+  if (targetKeys.size === 0) return false;
+  for (const key of targetKeys) {
+    if (!heldKeys.has(key)) return false;
+  }
+  return true;
+}
+
+// Passive OS-level listener — it observes key events but doesn't consume
+// them, so normal shortcuts in whatever app is focused keep working.
 uIOhook.on('keydown', (e) => {
-  if (isCtrlKey(e.keycode)) ctrlDown = true;
-  else if (isShiftKey(e.keycode)) shiftDown = true;
+  const name = KEYCODE_TO_CANONICAL[e.keycode];
+  if (name) heldKeys.add(name);
 
-  // Only fire on the up -> down transition, so keys already held when the
-  // app starts don't immediately trigger a recording.
-  if (ctrlDown && shiftDown && !hotkeyActive) {
+  // Only fire on the transition into "combo fully held", so keys already
+  // down when the app starts don't immediately trigger a recording.
+  if (isTargetCombo() && !hotkeyActive) {
     hotkeyActive = true;
     mainWindow?.webContents.send('hotkey:start-recording');
   }
 });
 
 uIOhook.on('keyup', (e) => {
-  if (isCtrlKey(e.keycode)) ctrlDown = false;
-  else if (isShiftKey(e.keycode)) shiftDown = false;
+  const name = KEYCODE_TO_CANONICAL[e.keycode];
+  if (name) heldKeys.delete(name);
 
-  if (hotkeyActive && !(ctrlDown && shiftDown)) {
+  if (hotkeyActive && !isTargetCombo()) {
     hotkeyActive = false;
     mainWindow?.webContents.send('hotkey:stop-recording');
   }
+});
+
+app.whenReady().then(() => {
+  migrateFromEnv();
+
+  createMainWindow();
+
+  createTray({
+    onOpenSettings: createSettingsWindow,
+    onOpenAbout: showAboutDialog,
+    onQuit: () => {
+      isQuitting = true;
+      app.quit();
+    },
+  });
+
+  uIOhook.start();
+
+  if (!hasRequiredKeys()) {
+    createSettingsWindow();
+  }
+});
+
+// Tray apps stay alive even if every window is hidden/closed — only the
+// tray's Quit item (or the OS) should end the process.
+app.on('window-all-closed', () => {});
+
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
+app.on('will-quit', () => {
+  uIOhook.stop();
+});
+
+ipcMain.handle('settings:load', () => loadSettings());
+
+ipcMain.handle('settings:save', (_event, newSettings) => {
+  saveSettings(newSettings);
+  reloadHotkeyTarget();
+  return true;
 });
 
 const DEEPGRAM_LIVE_URL =
@@ -104,9 +230,10 @@ let finalTranscriptParts = [];
 ipcMain.on('recording:start', () => {
   finalTranscriptParts = [];
   dgSocketOpen = false;
+  setTrayRecordingState(true);
 
   dgSocket = new WebSocket(DEEPGRAM_LIVE_URL, {
-    headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY}` },
+    headers: { Authorization: `Token ${loadSettings().deepgramKey}` },
   });
 
   dgSocket.on('open', () => {
@@ -147,6 +274,8 @@ ipcMain.on('audio:chunk', (event, audioBuffer) => {
 
 ipcMain.on('recording:stop', async () => {
   try {
+    setTrayRecordingState(false);
+
     if (!dgSocket) return;
 
     sendStatus('Finishing up...');
