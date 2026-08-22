@@ -5,6 +5,7 @@ const store = new Store({
     deepgramKey: '',
     groqKey: '',
     hotkey: 'Ctrl+Shift',
+    mongoUri: '',
   },
 });
 
@@ -13,6 +14,7 @@ function loadSettings() {
     deepgramKey: store.get('deepgramKey'),
     groqKey: store.get('groqKey'),
     hotkey: store.get('hotkey'),
+    mongoUri: store.get('mongoUri'),
   };
 }
 
@@ -31,6 +33,9 @@ function migrateFromEnv() {
   if (!current.groqKey && process.env.GROQ_API_KEY) {
     store.set('groqKey', process.env.GROQ_API_KEY);
   }
+  if (!current.mongoUri && process.env.MONGODB_URI) {
+    store.set('mongoUri', process.env.MONGODB_URI);
+  }
 }
 
 function hasRequiredKeys() {
@@ -38,4 +43,19 @@ function hasRequiredKeys() {
   return Boolean(deepgramKey && groqKey);
 }
 
-module.exports = { loadSettings, saveSettings, migrateFromEnv, hasRequiredKeys };
+function hasSeenHandsFreeNudge() {
+  return store.get('hasSeenHandsFreeNudge', false);
+}
+
+function markHandsFreeNudgeSeen() {
+  store.set('hasSeenHandsFreeNudge', true);
+}
+
+module.exports = {
+  loadSettings,
+  saveSettings,
+  migrateFromEnv,
+  hasRequiredKeys,
+  hasSeenHandsFreeNudge,
+  markHandsFreeNudgeSeen,
+};

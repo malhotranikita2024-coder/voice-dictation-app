@@ -274,6 +274,8 @@ They talk to each other over **IPC** (inter-process communication) — a message
 
 **Implication**: no databases, no server deployment, no user accounts.
 
+**Update (2026-08-22, dev-only, scoped):** when a `MONGODB_URI` is configured, `recording:stop` in `main.js` does one extra thing after the paste already succeeds — it writes the transcript + API usage metadata to MongoDB Atlas via `src/main/db.js`, in its own `try/catch` so a DB failure can never affect the paste. Still a two-process app; this is an optional main-process side effect, not a server. See the decision log (Section 10) for why this is a scoped exception to the "no databases" line above, not a reversal of it.
+
 ---
 
 ## 6. Tech stack decisions
@@ -296,6 +298,7 @@ For each choice: **the job** (what problem it solves), **3–4 options considere
 | Tray icon | **Electron's built-in `Tray` API** | v2 |
 | Floating pill | **BrowserWindow with frame:false, transparent:true, alwaysOnTop:true** | v2 |
 | Config storage | **electron-store** | v2 |
+| Transcript/usage persistence (dev-only, optional) | **MongoDB Atlas** — official `mongodb` driver | dev tooling |
 | Bundling to installer | **electron-builder** | v3 |
 | Landing page HTML | plain HTML5 | v3 |
 | Landing page CSS | **Tailwind CSS (via CDN)** | v3 |
@@ -501,6 +504,24 @@ For each choice: **the job** (what problem it solves), **3–4 options considere
 **Things to know**:
 1. File is JSON in plaintext — API keys are NOT encrypted. Acceptable for personal-use app (the user's machine IS the trust boundary).
 2. Config location varies by OS. Good for cleanliness; check the actual path when debugging.
+
+---
+
+#### Transcript/usage persistence (dev-only, optional)
+
+**The job**: save every completed dictation (raw + cleaned text) and the API usage/cost metadata behind it (Deepgram audio-seconds, Groq token counts) somewhere durable, so there's a history to look at later and real cost visibility per session. Foundation for the v4 "in-app dictation history" feature (Section 12).
+
+**Options considered**:
+- **MongoDB Atlas, official `mongodb` driver** ← chosen. Free tier (M0) is enough for personal use. Document shape matches our data naturally — a dictation and its API-usage record are just two related JSON-ish documents (collections named `dictations` and `api_usage`, linked by `api_usage.dictationId → dictations._id`), no schema migrations to manage. Official driver over an ODM like Mongoose because we only have two collections — an ODM's validation/modeling layer would be more code than the two `insertOne` calls it replaces.
+- SQLite (local file, e.g. `better-sqlite3`). No network dependency, no account needed, simplest possible option. Rejected because it doesn't survive a laptop wipe/reinstall the way a cloud DB does, and doesn't teach the skill of talking to a hosted database — which is part of the point per Section 1's task framing ("basic infra for tech").
+- Supabase (Postgres). Also free-tier hosted, relational instead of document. Passed over only because Mongo's document model was a closer match to "one dictation = one JSON blob" with no join-heavy queries planned.
+
+**Things to know**:
+1. **This is a scoped departure from Section 5's "no databases" line**, not a reversal — the DB only activates when `MONGODB_URI` is set. See the decision log (Section 10).
+2. **Atlas requires an IP allowlist.** A connection attempt from an IP not on the allowlist fails outright — this is a common first-connection gotcha, not a bug in our code.
+3. **Never blocks the pipeline.** `connectDb()` is called without `await` in `app.whenReady()`, and every write (`saveDictation`, `saveApiUsage`) is wrapped in try/catch that always resolves rather than throwing. A slow or unreachable Atlas cluster can add startup lag in the background, but can never delay or fail a dictation.
+4. The connection string embeds the database name (`mongodb://.../voice-dictation?...`) — the code never hardcodes it, so it just follows whatever's in `.env`.
+5. **Use the standard (non-SRV) connection string, not the `mongodb+srv://` form.** SRV URIs require a DNS lookup that fails on machines where Node's DNS resolver is pinned to a stub (common when WSL is installed on Windows and the WSL virtual adapter's proxy hijacks 127.0.0.1). The standard `mongodb://host1,host2,host3/...` form skips that lookup entirely. Non-obvious cost of the SRV form; we hit it during setup.
 
 ---
 
@@ -804,6 +825,7 @@ Running record of choices and their reasons.
 | 2026-08-17 | **API key architecture: keys and all API calls (Deepgram, Groq) live in main process** | Follows Electron security best practice — keys never touch the Chromium renderer. Renderer only captures audio (via Web Audio API) and forwards chunks to main via IPC. Slightly more IPC code, but defensible in review and teaches proper Electron patterns. |
 | 2026-08-20 | Switched from `@deepgram/sdk`'s live client to the raw `ws` library for streaming, and removed the SDK dependency entirely | `deepgram.listen.v1.connect()` never opened a working WebSocket inside Electron's main process (no error, no data, nothing) — confirmed via isolated tests that the identical URL/headers/key work instantly with plain `ws`, both in bare Node and inside Electron. Root cause inside the SDK itself was never fully pinned down; bypassing it was faster and more reliable than continuing to reverse-engineer a third-party bug. See Section 6 and Section 11 (v1 learning log) for the full story. |
 | 2026-08-20 | Tightened the Groq cleanup prompt to forbid word substitution, with a narrow exception for resolving explicitly-flagged verbal self-corrections | Testing showed Groq would occasionally "fix" a Deepgram mishearing by swapping in a different word, silently changing meaning. Logging the raw pre-Groq transcript proved most perceived "Groq errors" were actually Deepgram mishearings that Groq was smoothing over. See Section 11 and Section 13. |
+| 2026-08-22 | Added optional, dev-only MongoDB Atlas persistence for transcripts + API usage, gated on `MONGODB_URI` being set | Section 5 states "no databases, no server deployment, no user accounts" (originally logged 2026-08-17, above) — this is a **scoped exception**, not a reversal of that call: the DB module (`src/main/db.js`) is a no-op with zero behavior change when no URI is configured, so the shipped `.exe` still has no database for any end user who doesn't opt in. Nikita uses it in dev for cost visibility and as the data foundation for the v4 dictation-history feature (Section 12). DB writes happen after paste, in their own try/catch — a Mongo failure can never block or fail a dictation. |
 
 ---
 
@@ -859,6 +881,18 @@ The second structural question was making the hotkey configurable instead of har
 
 **How the app's feel actually changed**: no window flashes open on launch anymore — the first sign the app exists is the tray icon. Settings persist in `%APPDATA%\voice-dictation-app\config.json` instead of `.env`, confirmed by deleting `.env` entirely after a save and relaunching with dictation still working. Changing the hotkey from `Ctrl+Shift` to `Ctrl+Space` mid-session, live-tested in Notepad, took effect without an app restart, since keys and the active hotkey target are re-read from the store rather than cached at startup. That's the first session where the app stopped feeling like a script you run and started feeling like a small persistent background program.
 
+**Session 2 — floating recording pill.**
+
+Terminal 7's job was giving recording an actual visual signal — up to this point the only feedback was a 16×16 tray icon swap, easy to miss entirely. The interesting part of this session wasn't the pill's look, it was realizing there was almost no new plumbing to build: `main.js` already had exactly two IPC handlers (`recording:start`, `recording:stop`) that bracket every recording session regardless of whether it was triggered by the hotkey or the manual fallback button, and both already did `setTrayRecordingState(...)` as their first line. The pill just hooks into those same two lines (`showPill()` / `hidePill()` right alongside the tray calls) instead of adding a third signal path. That's also what made the "don't show the pill before recording actually starts" requirement easy to satisfy correctly without extra timing code — showing it at the very top of `recording:start`, the same tick the tray icon flips, means it can't ever lag noticeably behind the tray, and both fire before the Deepgram socket or the AudioWorklet pipeline finish spinning up (a few hundred ms lead is imperceptible; a few-second lead — which we didn't have — would have looked janky).
+
+The one setting the whole feature lives or dies on is `focusable: false`. Losing keyboard focus for even a moment would mean the trailing Ctrl+V paste lands wherever the OS decided focus went instead of the app the user was actually dictating into — a silent, confusing failure with no error to grep for. We didn't rely on that flag alone: Electron's `win.show()` is documented to request activation even for a window created with `focusable: false`, so the pill calls `showInactive()` instead, which is the explicit "make visible without asking for focus" API. Belt-and-suspenders rather than trusting one flag to carry the whole guarantee.
+
+Positioning turned out to have one non-obvious trap: `screen.getPrimaryDisplay().bounds` includes the taskbar's screen real estate, so centering off `bounds` would tuck part of the pill behind the taskbar on a standard bottom-taskbar layout. `workArea` excludes whatever the taskbar occupies on any edge, so the same centering formula works regardless of where the user has docked their taskbar, with no OS-specific-position branching needed. Position is computed once at window creation, not recalculated on every `showPill()` — cheap, but it does mean a resolution change or monitor swap mid-session would leave the pill stale until restart. Documented as a known limitation rather than fixed, since this session was explicitly scoped to the primary display only.
+
+The other thing worth naming precisely: this session's "gotcha" was mostly preempted rather than debugged. Transparent `BrowserWindow`s are known to flicker or render solid black on some Windows GPU driver combinations, so the CSS was structured from the start with a single `background: transparent` line (documented inline) that flips to a solid `var(--pill-bg)` if that surfaces on real hardware, paired with the one-line `transparent: true → false` swap in `pill.js`. The trade-off if that fallback is ever needed: an opaque `BrowserWindow` is a hard rectangle at the OS level, so CSS `border-radius` stops rounding real window edges — worth knowing in advance rather than reverse-engineering the first time a rounded pill turns into a rounded rectangle floating inside an invisible square.
+
+**How this changes the feel of recording**: before this session, "is it actually listening?" required looking at a tray icon in the notification area corner — not something you glance at mid-sentence. Now there's a real answer to that question sitting right where your eyes already are (bottom-center, where Wispr Flow puts it too), and it disappears the instant the hotkey releases rather than lingering through the cleanup/paste pipeline. That's the difference between an app you have to trust is working and one that shows you it's working.
+
 ### v3 — "Can strangers download and use it?"
 _(Empty.)_
 
@@ -879,6 +913,13 @@ Wispr Flow-inspired features that we could layer on later:
   - **UI**: 4-screen onboarding style picker with sample messages per style (matches Wispr's visual pattern) + settings screen to change picks later
   - **Storage**: preferences saved in electron-store as `{ personal: "very_casual", work: "casual", email: "formal", other: "casual" }`
   - **Estimated effort**: ~2 solid days (12–15 hrs) — biggest chunk is the 4-screen onboarding UI
+- **Always-visible pill mode ("Show pill at all times" toggle)** — matches Wispr Flow's "Show Flow Bar at all times" setting.
+  - **Default (v2 Terminal 7):** pill hidden when not recording; appears while recording. This is Wispr's default too.
+  - **v4 addition:** user-toggleable "keep pill always visible" preference in settings. When ON, pill stays visible at bottom-center in a minimal idle state (small dot or dashes), and expands/animates during recording.
+  - **Recording state visual:** waveform animation — either real audio-driven (mic level bars) or a purely decorative animated waveform. Wispr uses a subtle wave.
+  - **Transitions:** smooth animation between idle → recording states (not just show/hide).
+  - **Storage:** preference saved in electron-store alongside other user settings.
+  - **Estimated effort:** ~½–1 day.
 - **Transforms** — rewrite finished dictations in a specific format (bullet list, meeting notes, LinkedIn post, etc.). Separate from Style; Wispr has this as a sidebar feature.
 - **Dictionary / vocabulary** — custom words the transcription should recognize (e.g., domain jargon, names).
 - **Voice profile / stats** — words per minute, streak, total words.

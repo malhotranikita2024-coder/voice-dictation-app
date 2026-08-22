@@ -7,31 +7,53 @@ let workletNode;
 let sourceNode;
 let silentGainNode;
 let isRecording = false;
+let isStarting = false;
+let stopRequestedWhileStarting = false;
 
 async function startRecording() {
+  // getUserMedia + AudioWorklet setup below is async, so a fast enough tap
+  // (double-tap hands-free makes quick taps a normal thing, not a rare
+  // edge case) can release the hotkey before isRecording ever flips true.
+  // Without this guard, onRecordingStop's `if (!isRecording) return`
+  // silently drops that stop — recording:stop never reaches main.js, the
+  // pill/tray never revert, and the mic keeps running: looks exactly like
+  // an accidental hands-free lock even though main.js's hands-free state
+  // machine never engaged.
+  if (isStarting || isRecording) return;
+  isStarting = true;
+  stopRequestedWhileStarting = false;
   window.api.startRecording();
 
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  audioContext = new AudioContext({ sampleRate: 16000 });
-  await audioContext.audioWorklet.addModule('pcm-worklet-processor.js');
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new AudioContext({ sampleRate: 16000 });
+    await audioContext.audioWorklet.addModule('pcm-worklet-processor.js');
 
-  sourceNode = audioContext.createMediaStreamSource(mediaStream);
-  workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
-  workletNode.port.onmessage = (event) => {
-    window.api.sendAudioChunk(event.data);
-  };
+    sourceNode = audioContext.createMediaStreamSource(mediaStream);
+    workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+    workletNode.port.onmessage = (event) => {
+      window.api.sendAudioChunk(event.data);
+    };
 
-  // A worklet with no path to the destination often never gets process()
-  // called, so route through a silent gain node instead of leaving it
-  // dangling (and to avoid the mic feeding back out the speakers).
-  silentGainNode = audioContext.createGain();
-  silentGainNode.gain.value = 0;
-  sourceNode.connect(workletNode);
-  workletNode.connect(silentGainNode);
-  silentGainNode.connect(audioContext.destination);
+    // A worklet with no path to the destination often never gets process()
+    // called, so route through a silent gain node instead of leaving it
+    // dangling (and to avoid the mic feeding back out the speakers).
+    silentGainNode = audioContext.createGain();
+    silentGainNode.gain.value = 0;
+    sourceNode.connect(workletNode);
+    workletNode.connect(silentGainNode);
+    silentGainNode.connect(audioContext.destination);
 
-  isRecording = true;
-  statusEl.textContent = 'Recording... speak now (release Ctrl+Shift, or click the button, when done)';
+    isRecording = true;
+    statusEl.textContent = 'Recording... speak now (release Ctrl+Shift, or click the button, when done)';
+  } finally {
+    isStarting = false;
+  }
+
+  if (stopRequestedWhileStarting) {
+    stopRequestedWhileStarting = false;
+    stopRecording();
+  }
 }
 
 function stopRecording() {
@@ -62,13 +84,18 @@ recordButton.addEventListener('click', async () => {
 });
 
 window.api.onRecordingStart(() => {
-  if (isRecording) return;
   startRecording().catch((err) => {
     statusEl.textContent = `Mic error: ${err.message}`;
   });
 });
 
 window.api.onRecordingStop(() => {
+  if (isStarting) {
+    // Setup (getUserMedia/AudioWorklet) is still in flight — startRecording
+    // will replay this stop itself the moment isRecording flips true.
+    stopRequestedWhileStarting = true;
+    return;
+  }
   if (!isRecording) return;
   stopRecording();
 });
