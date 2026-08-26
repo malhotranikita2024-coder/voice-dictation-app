@@ -51,6 +51,14 @@ function markHandsFreeNudgeSeen() {
   store.set('hasSeenHandsFreeNudge', true);
 }
 
+function isOnboardingComplete() {
+  return store.get('onboardingComplete', false);
+}
+
+function markOnboardingComplete() {
+  store.set('onboardingComplete', true);
+}
+
 module.exports = {
   loadSettings,
   saveSettings,
@@ -58,4 +66,6 @@ module.exports = {
   hasRequiredKeys,
   hasSeenHandsFreeNudge,
   markHandsFreeNudgeSeen,
+  isOnboardingComplete,
+  markOnboardingComplete,
 };

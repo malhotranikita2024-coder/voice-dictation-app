@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const { app, BrowserWindow, ipcMain, clipboard, dialog, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, dialog, Notification, shell } = require('electron');
 const path = require('node:path');
 const WebSocket = require('ws');
 const Groq = require('groq-sdk');
@@ -13,6 +13,8 @@ const {
   hasRequiredKeys,
   hasSeenHandsFreeNudge,
   markHandsFreeNudgeSeen,
+  isOnboardingComplete,
+  markOnboardingComplete,
 } = require('./src/main/settings');
 const { createTray, setTrayRecordingState } = require('./src/main/tray');
 const { createPillWindow, showPill, hidePill } = require('./src/main/pill');
@@ -23,7 +25,7 @@ const { activeWindow } = require('get-windows');
 // shared default Electron identity, which is why the taskbar/title bar can
 // show the generic Electron logo even when a window's own `icon` option is
 // set correctly.
-app.setAppUserModelId('com.voicedictation.app');
+app.setAppUserModelId('com.ramble.app');
 
 // This app has no visible window even on a successful launch — it only
 // shows a tray icon — so without this lock, a second double-click (or an
@@ -66,6 +68,7 @@ async function cleanupTranscript(rawText) {
 
 let mainWindow;
 let settingsWindow;
+let onboardingWindow;
 let isQuitting = false;
 
 function createMainWindow() {
@@ -129,17 +132,79 @@ function createSettingsWindow() {
   });
 }
 
+function createOnboardingWindow() {
+  if (onboardingWindow) {
+    onboardingWindow.show();
+    onboardingWindow.focus();
+    return;
+  }
+
+  onboardingWindow = new BrowserWindow({
+    width: 480,
+    height: 560,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    alwaysOnTop: false,
+    show: false, // shown explicitly on 'ready-to-show' below — see note
+    icon: path.join(app.getAppPath(), 'assets/tray-icon-source.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  onboardingWindow.setMenuBarVisibility(false);
+
+  // Electron's implicit "show by default" behavior isn't reliable in every
+  // launch context (e.g. a process started without OS foreground rights can
+  // end up with a fully-created, fully-loaded window that Windows never
+  // actually paints). Showing explicitly once the first frame is ready is
+  // the standard, robust pattern — same idea as the Settings window's reuse
+  // path a few lines up, which also shows+focuses explicitly rather than
+  // assuming visibility.
+  onboardingWindow.on('ready-to-show', () => {
+    onboardingWindow.show();
+    onboardingWindow.focus();
+  });
+
+  onboardingWindow.loadFile('onboarding.html');
+
+  // Unlike Settings, this is a one-time flow — closing it (via Finish or the
+  // OS "X") should really close it, not hide it. The `closed` handler below
+  // is the safety net for the "closed via X before entering keys" case.
+  onboardingWindow.on('closed', () => {
+    onboardingWindow = null;
+    if (!hasRequiredKeys()) {
+      createSettingsWindow();
+    }
+  });
+}
+
 function showAboutDialog() {
   dialog.showMessageBox({
     type: 'info',
-    title: 'About Voice Dictation',
-    message: 'Voice Dictation App',
+    title: 'About Ramble',
+    message: 'Ramble',
     detail: `Version ${app.getVersion()}\nHold your configured hotkey anywhere to dictate.`,
   });
 }
 
 function sendStatus(text) {
   mainWindow?.webContents.send('status', text);
+}
+
+// The only user-visible error surface in the app: mainWindow is permanently
+// hidden (see createMainWindow), so sendStatus() alone never reaches the
+// user. Reuses the same Notification mechanism already proven out by the
+// hands-free nudge below.
+function notifyError(title, body, { onClick } = {}) {
+  sendStatus(`Error: ${title}`);
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({ title, body, silent: false });
+  if (onClick) notification.on('click', onClick);
+  notification.show();
 }
 
 // --- Generic hotkey combo engine -------------------------------------
@@ -343,7 +408,9 @@ if (gotSingleInstanceLock) {
 
     uIOhook.start();
 
-    if (!hasRequiredKeys()) {
+    if (!isOnboardingComplete()) {
+      createOnboardingWindow();
+    } else if (!hasRequiredKeys()) {
       createSettingsWindow();
     }
   });
@@ -370,6 +437,18 @@ ipcMain.handle('settings:save', (_event, newSettings) => {
   return true;
 });
 
+ipcMain.handle('settings:complete-onboarding', () => {
+  markOnboardingComplete();
+  return true;
+});
+
+// Renderers can't call `shell` directly — this is the one-line main-process
+// bridge the onboarding mic-test screen needs for its "Open Windows
+// Settings" deep link.
+ipcMain.handle('settings:open-mic-settings', () => {
+  shell.openExternal('ms-settings:privacy-microphone');
+});
+
 const DEEPGRAM_LIVE_URL =
   'wss://api.deepgram.com/v1/listen?model=nova-2&encoding=linear16&sample_rate=16000&channels=1&smart_format=true&interim_results=false';
 
@@ -378,6 +457,11 @@ let dgSocketOpen = false;
 let finalTranscriptParts = [];
 let recordingStartedAt = null;
 let deepgramMetadata = null;
+// Set by the socket's 'unexpected-response'/'error' listeners below, read by
+// recording:stop's empty-transcript branch to tell "genuinely no speech" apart
+// from "the socket never worked" — see the notes on that branch for why the
+// old behavior (always 'No speech detected') was misleading for this case.
+let dgSessionError = null;
 
 ipcMain.on('recording:start', () => {
   if (dgSocket) {
@@ -387,7 +471,17 @@ ipcMain.on('recording:start', () => {
     // setting dgSocketOpen = true for a socket that isn't the current one,
     // which previously caused "WebSocket is not open: readyState 0
     // (CONNECTING)" errors on the new recording's Finalize send.
-    dgSocket.removeAllListeners();
+    //
+    // Same reasoning as the mic-denied cleanup path below: terminating a
+    // socket that never finished connecting can make `ws` emit 'error' —
+    // possibly on a later tick — and an unheard 'error' event crashes the
+    // whole process by default. A no-op listener here guarantees one is
+    // always present, however late it arrives.
+    dgSocket.on('error', () => {});
+    dgSocket.removeAllListeners('open');
+    dgSocket.removeAllListeners('message');
+    dgSocket.removeAllListeners('unexpected-response');
+    dgSocket.removeAllListeners('close');
     dgSocket.terminate();
   }
 
@@ -395,6 +489,7 @@ ipcMain.on('recording:start', () => {
   deepgramMetadata = null;
   recordingStartedAt = Date.now();
   dgSocketOpen = false;
+  dgSessionError = null;
   setTrayRecordingState(true);
   showPill();
 
@@ -432,11 +527,20 @@ ipcMain.on('recording:start', () => {
 
   socket.on('unexpected-response', (req, res) => {
     console.error('Deepgram rejected the connection, status:', res.statusCode);
+    if (dgSocket === socket) {
+      dgSessionError = {
+        kind: res.statusCode === 401 || res.statusCode === 403 ? 'unauthorized' : 'rejected',
+        statusCode: res.statusCode,
+      };
+    }
     sendStatus(`Error: Deepgram connection rejected (${res.statusCode})`);
   });
 
   socket.on('error', (err) => {
     console.error('Deepgram socket error (may auto-reconnect):', err.message);
+    if (dgSocket === socket) {
+      dgSessionError = { kind: 'network', message: err.message };
+    }
   });
 
   socket.on('close', () => {
@@ -452,7 +556,18 @@ ipcMain.on('audio:chunk', (event, audioBuffer) => {
   }
 });
 
-ipcMain.on('recording:stop', async () => {
+// Known Windows shell process names — see the noFocusTarget check below for
+// why this exists and what it can and can't detect.
+const SHELL_SURFACE_NAMES = new Set([
+  'Explorer',
+  'Windows Explorer', // get-windows reports the desktop's owner as this, not bare "Explorer"
+  'ShellExperienceHost',
+  'SearchHost',
+  'StartMenuExperienceHost',
+  'LockApp',
+]);
+
+ipcMain.on('recording:stop', async (_event, reason) => {
   // Snapshot this session's socket/transcript/open-flag before the first
   // await below. Without this, a fast enough new recording:start (e.g. the
   // tap-1-then-tap-2 gap in double-tap hands-free, comfortably under the
@@ -464,10 +579,51 @@ ipcMain.on('recording:stop', async () => {
   const transcriptParts = finalTranscriptParts;
   const wasOpen = dgSocketOpen;
   const sessionStartedAt = recordingStartedAt;
+  const sessionError = dgSessionError;
 
   try {
     setTrayRecordingState(false);
     hidePill();
+
+    // `reason` means renderer.js's start-up itself failed (e.g. mic denied)
+    // before any audio ever reached Deepgram — recording:start already fired
+    // (socket open, pill shown, tray set), so that has to be unwound here,
+    // but the normal transcript/paste pipeline below has nothing to do.
+    if (reason) {
+      if (socket) {
+        // A socket that never finished connecting (still mid-handshake, as
+        // is typical here — mic-denied is detected and reported back before
+        // Deepgram even opens) can have `ws` emit an 'error' event when
+        // terminated — and it can do so on a LATER tick, after terminate()
+        // has already returned, not synchronously within this call. Node's
+        // EventEmitter throws by default whenever an 'error' event fires
+        // with zero listeners attached; removeAllListeners() strips the
+        // graceful handler from recording:start, so that later, unheard
+        // error crashed the whole main process — a plain try/catch around
+        // terminate() can't catch a throw that happens after it returns.
+        // Attaching a no-op error listener FIRST, then only removing the
+        // other listeners we actually want gone, guarantees something is
+        // always there to absorb it, however late it arrives.
+        socket.on('error', () => {});
+        socket.removeAllListeners('open');
+        socket.removeAllListeners('message');
+        socket.removeAllListeners('unexpected-response');
+        socket.removeAllListeners('close');
+        socket.terminate();
+      }
+      dgSocket = null;
+      dgSocketOpen = false;
+      if (reason === 'mic-denied') {
+        notifyError(
+          'Microphone access is blocked',
+          'Enable it in Windows Settings → Privacy & security → Microphone, then try again.',
+          { onClick: () => shell.openExternal('ms-settings:privacy-microphone') }
+        );
+      } else {
+        notifyError('Could not access the microphone', reason.replace(/^mic-error:/, ''));
+      }
+      return;
+    }
 
     if (!socket) return;
 
@@ -504,7 +660,20 @@ ipcMain.on('recording:stop', async () => {
     }
 
     if (!rawTranscript) {
-      sendStatus('No speech detected');
+      // A never-opened/failed socket also lands here with an empty
+      // transcript (nothing was ever sent to push into finalTranscriptParts)
+      // — sessionError disambiguates that from genuine silence, which
+      // otherwise produced a misleading 'No speech detected' for what was
+      // actually a bad key or a dead connection.
+      if (sessionError?.kind === 'unauthorized') {
+        notifyError('Invalid Deepgram API key', 'Check your key in Settings.', {
+          onClick: () => createSettingsWindow(),
+        });
+      } else if (sessionError) {
+        notifyError('Connection problem', 'Could not reach Deepgram — check your internet connection.');
+      } else {
+        sendStatus('No speech detected');
+      }
       return;
     }
 
@@ -520,11 +689,30 @@ ipcMain.on('recording:stop', async () => {
     // edge case where the user releases the hotkey and switches windows
     // before the paste lands). Silent-fail: null if the query errors.
     let focusedApp = null;
+    let focusedWin = null;
     try {
-      const win = await activeWindow();
-      focusedApp = win?.owner?.name ?? null;
+      focusedWin = await activeWindow();
+      focusedApp = focusedWin?.owner?.name ?? null;
     } catch (winErr) {
       console.warn('[focused-app] capture failed:', winErr.message);
+    }
+
+    // Heuristic, not true UI-Automation focused-control detection:
+    // get-windows can only see the focused *window/process*, not the focused
+    // *control* within it, so there's no reliable general way to know "is a
+    // text field actually focused." What we CAN detect is focus sitting on a
+    // known Windows shell surface (desktop, Start, search) where a paste has
+    // nowhere sensible to land — in that case, leave the text on the
+    // clipboard instead of blind-pasting into whatever has OS focus.
+    const noFocusTarget = !focusedWin || SHELL_SURFACE_NAMES.has(focusedWin.owner?.name);
+    if (noFocusTarget) {
+      clipboard.writeText(cleaned);
+      sendStatus('Nothing was focused to type into — your text is on the clipboard (Ctrl+V to paste it).');
+      notifyError(
+        'Nothing to paste into',
+        'Click into a text field, then dictate again — or press Ctrl+V, your message is in the clipboard.'
+      );
+      return;
     }
 
     sendStatus('Pasting...');
@@ -571,5 +759,20 @@ ipcMain.on('recording:stop', async () => {
   } catch (err) {
     console.error('recording:stop pipeline failed:', err, err.cause ? `\ncause: ${err.cause}` : '');
     sendStatus(`Error: ${err.message}${err.cause ? ` (${err.cause})` : ''}`);
+
+    // This catch spans the Groq call and everything after it (paste, DB) —
+    // classify what's likely to have failed so the notification says
+    // something more useful than a raw error message.
+    const isUnauthorized = err.status === 401 || err.status === 403;
+    const isNetwork = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed/i.test(err.message ?? '');
+    if (isUnauthorized) {
+      notifyError('Invalid Groq API key', 'Check your key in Settings.', {
+        onClick: () => createSettingsWindow(),
+      });
+    } else if (isNetwork) {
+      notifyError('Connection problem', 'Could not reach Groq — check your internet connection.');
+    } else {
+      notifyError('Something went wrong', err.message);
+    }
   }
 });

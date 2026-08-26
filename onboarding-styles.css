@@ -1,0 +1,254 @@
+:root {
+  --bg: #1e1e1e;
+  --surface: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.12);
+  --text: #f5f5f5;
+  --text-dim: #a8a8a8;
+  --accent: #f5f5f5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Segoe UI", sans-serif;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 24px 28px;
+}
+
+.welcome-banner {
+  margin-bottom: 18px;
+}
+
+.welcome-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.welcome-quote {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.steps {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.step-dot {
+  width: 22px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.step-dot.active {
+  background: var(--accent);
+}
+
+.step-dot.done {
+  background: var(--text-dim);
+}
+
+.step {
+  flex: 1;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+.lead {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 14px 0 4px;
+}
+
+input[type="password"],
+input[type="text"] {
+  font-size: 14px;
+  padding: 8px;
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.key-row {
+  display: flex;
+  gap: 8px;
+}
+
+.key-row input {
+  flex: 1;
+}
+
+input.error {
+  border-color: #ff8a80;
+}
+
+.field-error {
+  display: none;
+  font-size: 11px;
+  color: #ff8a80;
+  margin-top: 4px;
+}
+
+.field-error.visible {
+  display: block;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.eye-toggle {
+  font-size: 12px;
+  padding: 6px 10px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.mic-test {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+#testMicButton {
+  font-size: 13px;
+  padding: 9px 14px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.level-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 24px;
+}
+
+.level-bars span {
+  width: 4px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: height 60ms ease-out;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 16px;
+  margin: 10px 0 0;
+}
+
+.hint.error {
+  color: #ff8a80;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--text);
+  text-decoration: underline;
+  font-size: 12px;
+  padding: 0;
+  margin-top: 8px;
+}
+
+.hotkey-chips {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.hotkey-chip {
+  font-family: monospace;
+  font-size: 14px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+}
+
+.hotkey-chip.active {
+  background: var(--accent);
+  color: #1e1e1e;
+  border-color: var(--accent);
+}
+
+.hotkey-chip.matched {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* While a key is actively held AND already matched, both classes are present
+   at once. Without this, .matched's lighter text color (declared after
+   .active) wins the cascade and overrides .active's dark text — leaving
+   near-white text on the near-white "active" background, invisible. This
+   rule keeps the held state's dark, readable text on top regardless of
+   class declaration order. */
+.hotkey-chip.active.matched {
+  color: #1e1e1e;
+}
+
+.button-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 24px;
+}
+
+.button-row button {
+  font-size: 14px;
+  padding: 9px 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #1e1e1e;
+  font-weight: 600;
+}
+
+.button-row button.secondary {
+  background: transparent;
+  color: var(--text);
+}
+
+.button-row button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

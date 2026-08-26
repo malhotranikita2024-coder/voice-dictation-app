@@ -71,22 +71,29 @@ function stopRecording() {
   recordButton.disabled = true;
 }
 
+// startRecording() already told main.js recording:start fired (opened the
+// Deepgram socket, showed the pill, set the tray icon) before getUserMedia
+// can fail — so a failure here has to tell main.js to unwind that state via
+// recording:stop, not just update local UI text, or the pill/tray/socket
+// are left stuck in "recording" until an unrelated stop happens to clear them.
+function handleStartFailure(err) {
+  statusEl.textContent = `Mic error: ${err.message}`;
+  recordButton.disabled = false;
+  const reason = err.name === 'NotAllowedError' ? 'mic-denied' : `mic-error:${err.message}`;
+  window.api.stopRecording(reason);
+}
+
 recordButton.addEventListener('click', async () => {
   if (isRecording) {
     stopRecording();
     return;
   }
 
-  await startRecording().catch((err) => {
-    statusEl.textContent = `Mic error: ${err.message}`;
-    recordButton.disabled = false;
-  });
+  await startRecording().catch(handleStartFailure);
 });
 
 window.api.onRecordingStart(() => {
-  startRecording().catch((err) => {
-    statusEl.textContent = `Mic error: ${err.message}`;
-  });
+  startRecording().catch(handleStartFailure);
 });
 
 window.api.onRecordingStop(() => {

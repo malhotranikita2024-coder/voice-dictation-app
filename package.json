@@ -14,8 +14,8 @@
   "license": "ISC",
   "type": "commonjs",
   "build": {
-    "appId": "com.voicedictation.app",
-    "productName": "Voice Dictation",
+    "appId": "com.ramble.app",
+    "productName": "Ramble",
     "npmRebuild": false,
     "win": {
       "icon": "assets/tray-icon-source.png"

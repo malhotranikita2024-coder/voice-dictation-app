@@ -16,7 +16,7 @@ function createTray({ onOpenSettings, onOpenAbout, onQuit }) {
   activeIcon = nativeImage.createFromPath(iconPath('tray-icon-active.png'));
 
   tray = new Tray(idleIcon);
-  tray.setToolTip('Voice Dictation');
+  tray.setToolTip('Ramble');
 
   const contextMenu = Menu.buildFromTemplate([
     { label: 'Settings', click: () => onOpenSettings() },

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'" />
+    <title>Welcome to Ramble</title>
+    <link rel="stylesheet" href="onboarding-styles.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="welcome-banner">
+        <div class="welcome-title">Welcome to Ramble</div>
+        <div class="welcome-quote">Just ramble — we'll clean it up.</div>
+      </div>
+
+      <div class="steps">
+        <span class="step-dot" data-step-dot="1"></span>
+        <span class="step-dot" data-step-dot="2"></span>
+        <span class="step-dot" data-step-dot="3"></span>
+      </div>
+
+      <section class="step" data-step="1">
+        <h1>Add your API keys</h1>
+        <p class="lead">Ramble uses your own Deepgram and Groq accounts — nothing is sent through our servers.</p>
+
+        <label for="deepgramKey">Deepgram API key</label>
+        <div class="key-row">
+          <input type="password" id="deepgramKey" autocomplete="off" />
+          <button type="button" class="eye-toggle" data-target="deepgramKey">show</button>
+        </div>
+        <span class="field-error" id="deepgramKeyError">Required</span>
+
+        <label for="groqKey">Groq API key</label>
+        <div class="key-row">
+          <input type="password" id="groqKey" autocomplete="off" />
+          <button type="button" class="eye-toggle" data-target="groqKey">show</button>
+        </div>
+        <span class="field-error" id="groqKeyError">Required</span>
+      </section>
+
+      <section class="step" data-step="2" hidden>
+        <h1>Test your microphone</h1>
+        <p class="lead">Windows will ask for microphone permission the first time — allow it so dictation can work.</p>
+
+        <div class="mic-test">
+          <button type="button" id="testMicButton">Test microphone</button>
+          <div class="level-bars" id="levelBars">
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+        <p id="micHint" class="hint"></p>
+        <button type="button" id="openMicSettingsButton" class="link-button" hidden>Open Windows microphone settings</button>
+      </section>
+
+      <section class="step" data-step="3" hidden>
+        <h1>Test your hotkey</h1>
+        <p class="lead">Hold the keys below anywhere on your screen to dictate.</p>
+
+        <div class="hotkey-chips" id="hotkeyChips"></div>
+        <p id="hotkeyHint" class="hint">Hold your hotkey now to see it light up.</p>
+      </section>
+
+      <div class="button-row">
+        <button type="button" id="backButton" class="secondary" hidden>Back</button>
+        <button type="button" id="nextButton">Next</button>
+        <button type="button" id="finishButton" hidden>Finish</button>
+      </div>
+    </div>
+
+    <script src="onboarding-renderer.js"></script>
+  </body>
+</html>
