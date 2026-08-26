@@ -29,6 +29,7 @@ function createPillWindow() {
     focusable: false, // must never steal keyboard focus from the app being dictated into
     hasShadow: false,
     show: false,
+    icon: path.join(app.getAppPath(), 'assets/tray-icon-source.png'),
     webPreferences: {
       sandbox: true,
       contextIsolation: true,

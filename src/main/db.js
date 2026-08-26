@@ -48,6 +48,7 @@ async function saveDictation({ text, rawText, hotkey, durationMs, startedAt, foc
       durationMs,
       appVersion: app.getVersion(),
       focusedApp,
+      wordCount: text.split(/\s+/).filter(Boolean).length,
     });
     return result.insertedId;
   } catch (err) {

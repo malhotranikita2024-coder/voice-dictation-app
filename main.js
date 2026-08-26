@@ -19,6 +19,23 @@ const { createPillWindow, showPill, hidePill } = require('./src/main/pill');
 const { connectDb, saveDictation, saveApiUsage, closeDb } = require('./src/main/db');
 const { activeWindow } = require('get-windows');
 
+// Without this, Windows identifies a dev-mode ("electron .") run under the
+// shared default Electron identity, which is why the taskbar/title bar can
+// show the generic Electron logo even when a window's own `icon` option is
+// set correctly.
+app.setAppUserModelId('com.voicedictation.app');
+
+// This app has no visible window even on a successful launch — it only
+// shows a tray icon — so without this lock, a second double-click (or an
+// accidental relaunch) silently starts a whole separate instance with its
+// own tray icon, hotkey listener, and audio pipeline, all competing with
+// the first one. requestSingleInstanceLock() must be called as early as
+// possible, before any window/tray/listener setup below.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
 const CLEANUP_SYSTEM_PROMPT = `You are a transcript cleanup assistant. The input is a raw speech-to-text transcript that may contain mistakes from the transcription itself — do not try to fix those. You may ONLY do the following:
 1. Fix punctuation and capitalization. The input comes from a live speech-to-text engine that inserts a period and capitalizes the next word at every brief pause the speaker takes, not only at real sentence ends. So a period followed by a word that grammatically continues the previous clause (e.g. starts with "and", "but", "so", "because", "to", "on", "with", "which", or similar) is usually a pause artifact, not an intentional sentence break — replace that period with a comma (or remove it) and lowercase the following word so it reads as one natural sentence. Only keep a period where what follows is genuinely a new, independent sentence.
 2. Remove filler words ('um', 'uh', 'like') when used purely as verbal filler.
@@ -62,6 +79,7 @@ function createMainWindow() {
     height: 600,
     show: false,
     skipTaskbar: true,
+    icon: path.join(app.getAppPath(), 'assets/tray-icon-source.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -86,6 +104,7 @@ function createSettingsWindow() {
     minimizable: false,
     maximizable: false,
     alwaysOnTop: false,
+    icon: path.join(app.getAppPath(), 'assets/tray-icon-source.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -299,28 +318,36 @@ uIOhook.on('keyup', (e) => {
   lastTapUpAt = heldDuration <= TAP_MAX_HOLD_MS ? Date.now() : null;
 });
 
-app.whenReady().then(() => {
-  migrateFromEnv();
-  connectDb(); // not awaited — DB must never delay app startup or the pipeline
+// Guarded by the lock above: if this process lost the race to be the one
+// true instance, app.quit() was already called, but that doesn't stop the
+// rest of this script from running synchronously — without this guard, a
+// second launch would still stand up its own tray icon, pill window, and
+// (worst of all) its own uIOhook.start(), fighting the first instance for
+// the same hotkey.
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    migrateFromEnv();
+    connectDb(); // not awaited — DB must never delay app startup or the pipeline
 
-  createMainWindow();
-  createPillWindow();
+    createMainWindow();
+    createPillWindow();
 
-  createTray({
-    onOpenSettings: createSettingsWindow,
-    onOpenAbout: showAboutDialog,
-    onQuit: () => {
-      isQuitting = true;
-      app.quit();
-    },
+    createTray({
+      onOpenSettings: createSettingsWindow,
+      onOpenAbout: showAboutDialog,
+      onQuit: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    });
+
+    uIOhook.start();
+
+    if (!hasRequiredKeys()) {
+      createSettingsWindow();
+    }
   });
-
-  uIOhook.start();
-
-  if (!hasRequiredKeys()) {
-    createSettingsWindow();
-  }
-});
+}
 
 // Tray apps stay alive even if every window is hidden/closed — only the
 // tray's Quit item (or the OS) should end the process.
@@ -397,8 +424,9 @@ ipcMain.on('recording:start', () => {
       // Deepgram sends this once, after CloseStream, summarizing the whole
       // session (request_id, duration, sha256, models). recording:stop
       // polls for this to land before reading it — see the wait loop after
-      // CloseStream there.
-      deepgramMetadata = msg;
+      // CloseStream there. _receivedAt is used only to compute
+      // deepgram.latencyMs in recording:stop; it's not persisted.
+      deepgramMetadata = { ...msg, _receivedAt: Date.now() };
     }
   });
 
@@ -445,9 +473,11 @@ ipcMain.on('recording:stop', async () => {
 
     sendStatus('Finishing up...');
 
+    let closeStreamAt = null;
     if (wasOpen && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'Finalize' }));
       await new Promise((resolve) => setTimeout(resolve, 1000));
+      closeStreamAt = Date.now();
       socket.send(JSON.stringify({ type: 'CloseStream' }));
 
       // Deepgram sends the Metadata message AFTER CloseStream. Poll for it
@@ -522,6 +552,9 @@ ipcMain.on('recording:stop', async () => {
             audioDurationSec: metadata?.duration ?? null,
             model: metadata?.models?.[0] ?? 'nova-2',
             sha256: metadata?.sha256 ?? null,
+            latencyMs: (metadata?._receivedAt && closeStreamAt)
+              ? metadata._receivedAt - closeStreamAt
+              : null,
           },
           groq: {
             model: cleanupResult.model,
