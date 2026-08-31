@@ -1,13 +1,14 @@
 {
   "name": "voice-dictation-app",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:db": "node scripts/test-db-connection.js",
-    "dist": "electron-builder --win --dir"
+    "dist": "electron-builder --win --dir",
+    "dist:installer": "electron-builder --win"
   },
   "keywords": [],
   "author": "",
@@ -17,8 +18,24 @@
     "appId": "com.ramble.app",
     "productName": "Ramble",
     "npmRebuild": false,
+    "artifactName": "${productName}-Setup.exe",
+    "files": [
+      "**/*",
+      "!.env",
+      "!.env.example",
+      "!.git${/*}",
+      "!.claude${/*}",
+      "!dist${/*}",
+      "!PROJECT_NOTES.md",
+      "!README.md"
+    ],
     "win": {
-      "icon": "assets/tray-icon-source.png"
+      "icon": "assets/icon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     },
     "directories": {
       "output": "dist"
