@@ -17,6 +17,9 @@
   "build": {
     "appId": "com.ramble.app",
     "productName": "Ramble",
+    "extraMetadata": {
+      "name": "ramble"
+    },
     "npmRebuild": false,
     "artifactName": "${productName}-Setup.exe",
     "files": [
