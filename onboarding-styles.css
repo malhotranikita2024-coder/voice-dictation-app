@@ -130,12 +130,19 @@ button {
 }
 
 .eye-toggle {
-  font-size: 12px;
-  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  padding: 0;
   background: var(--surface);
-  color: var(--text);
+  color: var(--text-dim);
   border: 1px solid var(--border);
   border-radius: 4px;
+}
+
+.eye-toggle:hover {
+  color: var(--text);
 }
 
 .mic-test {

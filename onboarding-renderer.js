@@ -46,12 +46,35 @@ function showStep(step) {
   }
 }
 
+// Simple open-eye / crossed-eye icon pair (Feather-style, hand-written so no
+// icon library or external asset is needed under this window's CSP). Button
+// shows the OPEN eye while the field is masked (click to reveal), and the
+// CROSSED eye while revealed (click to hide) — the standard convention.
+const EYE_OPEN_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const EYE_OFF_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
+function setKeyFieldHidden(input, button, hidden) {
+  input.type = hidden ? 'password' : 'text';
+  button.innerHTML = hidden ? EYE_OPEN_SVG : EYE_OFF_SVG;
+  const label = hidden ? 'Show' : 'Hide';
+  button.title = label;
+  button.setAttribute('aria-label', `${label} key`);
+}
+
 document.querySelectorAll('.eye-toggle').forEach((button) => {
+  const input = document.getElementById(button.dataset.target);
+  setKeyFieldHidden(input, button, true); // masked by default
+
   button.addEventListener('click', () => {
-    const input = document.getElementById(button.dataset.target);
-    const showing = input.type === 'text';
-    input.type = showing ? 'password' : 'text';
-    button.textContent = showing ? 'show' : 'hide';
+    setKeyFieldHidden(input, button, input.type === 'text');
+  });
+
+  // Pasting a key is usually the last thing done before moving on — default
+  // back to masked right after, rather than leaving it visible on screen
+  // (matches how most password managers behave, and avoids a pasted key
+  // sitting exposed if the field was left in "shown" mode from checking it).
+  input.addEventListener('paste', () => {
+    setTimeout(() => setKeyFieldHidden(input, button, true), 0);
   });
 });
 
