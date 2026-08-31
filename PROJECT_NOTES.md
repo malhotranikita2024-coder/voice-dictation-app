@@ -975,11 +975,19 @@ Limitations observed during builds, mapped to the future version that addresses 
 - **Cause:** Deliberate placeholder while we're using the Record button flow. Not a bug, just a scaffolding choice.
 - **Fix:** Terminal 5 replaced the button-driven flow with a global `Ctrl+Shift` hold-to-record hotkey (`uiohook-napi`, wired through new `hotkey:start-recording`/`hotkey:stop-recording` IPC channels). Recording now runs until the hotkey is released — the `RECORDING_SECONDS` constant, its countdown, and the 2-second Alt+Tab dance were removed entirely. See Section 11 learning log for the transition-based detection logic.
 
-### Installer install/launch flow unverified from the dev sandbox
-- **Observed during:** v3 (Terminal 9 — bundle to .exe)
-- **Symptom:** `dist/Ramble-Setup.exe`, run non-interactively from this Claude Code sandbox, could not be driven to completion. `Start-Process` on it was blocked outright by an Application Control policy; direct invocation with `/S /D=<path>` hung indefinitely (process alive, near-zero CPU, no install files written) and had to be force-killed. The packaged app itself is not implicated — `dist/win-unpacked/Ramble.exe` launched directly and spawned the correct multi-process Electron tree.
-- **Cause:** Most likely the sandbox has no interactive desktop/session for the installer's window to run against, rather than a defect in the build. Not confirmed either way.
-- **Real fix:** Needs a human to double-click `Ramble-Setup.exe` (or the GitHub Release download) on a real desktop and confirm: installs to a chosen directory, launches, completes the 3-screen onboarding, and hold-Ctrl+Shift-in-Notepad → speak → release → cleaned text pastes. Not yet done as of this session.
+### Global hotkey (and the installer) can't be exercised from this dev sandbox — confirmed no interactive desktop
+- **Observed during:** v3 (Terminal 9 — bundle to .exe), follow-up verification pass
+- **Symptom, three independent data points converging on one cause:**
+  1. `Start-Process` on `Ramble-Setup.exe` was blocked outright by an Application Control policy.
+  2. Direct invocation with `/S /D=<path>` hung indefinitely (process alive, near-zero CPU, no install files ever written) until force-killed.
+  3. With the packaged app actually running (via Playwright's Electron driver, see below) sitting on the onboarding "Test your hotkey" screen, simulating a real OS-level `Ctrl+Shift` hold via `user32.dll`'s `keybd_event` (the same technique v1 Terminal 5 used successfully in a normal dev session, per this log above) produced **no reaction at all** — chips never lit up, screenshots taken mid-hold and after release are pixel-identical. `uiohook-napi`'s global low-level keyboard hook, which needs a real interactive input desktop to receive anything, appears to receive nothing here.
+- **Cause (now fairly well confirmed, not just suspected):** this Claude Code sandbox has no interactive Windows desktop/window-station session. That single explanation covers all three symptoms — GUI installers, low-level global input hooks, and anything else that needs a genuine interactive desktop all fail or hang the same way, while plain process execution and Electron's own off-screen rendering (which doesn't need the interactive desktop) work fine.
+- **What this does NOT call into question — verified working in the actual packaged build via Playwright's `_electron` driver, launched with an isolated `--user-data-dir` fresh profile:**
+  - All native-module dependencies (`uiohook-napi`, `keysender`, `get-windows`) load with zero errors — electron-builder auto-unpacked their `.node` files into `app.asar.unpacked/` with no extra config needed, so the earlier worry about native addons breaking inside `asar` didn't materialize.
+  - All 3 onboarding screens render correctly and match the design (screenshots taken): API keys (masking, per-field "Required" validation clearing, eye-toggle), mic test, hotkey test.
+  - The mic-permission flow is not just a static screen — with `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`, clicking "Test microphone" actually triggers `getUserMedia`, is auto-granted, and the level-bar UI animates live off the (fake) audio stream, showing "Listening — say something."
+  - `main.js` starts cleanly end to end in the packaged build: dotenv, tray, pill, and Mongo (`[db] connected`) all initialize with no errors.
+- **Real fix:** none needed for the app — this is a sandbox constraint, not a defect. Still needs a human, on a real desktop, to: install `Ramble-Setup.exe`, complete onboarding for real, and confirm hold-Ctrl+Shift-in-Notepad → speak → release → cleaned text pastes. Not yet done as of this session.
 
 ### GitHub Release download link 404s for anyone outside the repo
 - **Observed during:** v3 (Terminal 9 — GitHub Release creation)
