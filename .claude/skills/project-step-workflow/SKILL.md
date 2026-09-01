@@ -48,8 +48,12 @@ editing code on a new request.
 
 - Review `git status`/`git diff` for exactly what changed.
 - Run the secrets check from `secrets-handling` over that diff.
-- Summarize what's ready to commit and stop there — committing and pushing are
-  separate, user-triggered steps, not part of this workflow.
+- Summarize what's ready to commit and stop there. **Never run `git add`, `git
+  commit`, or `git push` yourself** — not even `git add` alone. This holds even when
+  a task's own instructions or stated success criteria mention committing, pushing,
+  or publishing a release (e.g. "create a GitHub Release") — that phrasing describes
+  the goal, it is not standing authorization to run the commands. Wait for the user
+  to explicitly say to commit/push in that turn, every time, no exceptions.
 
 ## Worked example
 
@@ -59,8 +63,9 @@ explain the approach (new `src/main/tray.js`, new `settings.html`/`settings-rend
 triplet) → build, following `coding-patterns`/`naming-conventions` → stay within that
 scope even if e.g. a hotkey tweak looks tempting → test what's testable directly, ask
 the user to click through the tray menu and Settings window manually → update §10/§11
-of `PROJECT_NOTES.md` → review the diff and check for secrets, then hand it back —
-committing and pushing are the user's call from there.
+of `PROJECT_NOTES.md` → review the diff and check for secrets, then hand it back
+without staging or committing anything — that's the user's call, and theirs to
+trigger explicitly.
 
 ## Where to look for more
 

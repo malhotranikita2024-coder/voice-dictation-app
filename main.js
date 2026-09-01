@@ -82,7 +82,7 @@ function createMainWindow() {
     height: 600,
     show: false,
     skipTaskbar: true,
-    icon: path.join(app.getAppPath(), 'assets/tray-icon-source.png'),
+    icon: path.join(app.getAppPath(), 'assets/icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -104,10 +104,10 @@ function createSettingsWindow() {
     width: 500,
     height: 490,
     resizable: false,
-    minimizable: false,
+    minimizable: true,
     maximizable: false,
     alwaysOnTop: false,
-    icon: path.join(app.getAppPath(), 'assets/tray-icon-source.png'),
+    icon: path.join(app.getAppPath(), 'assets/icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -143,11 +143,11 @@ function createOnboardingWindow() {
     width: 480,
     height: 560,
     resizable: false,
-    minimizable: false,
+    minimizable: true,
     maximizable: false,
     alwaysOnTop: false,
     show: false, // shown explicitly on 'ready-to-show' below — see note
-    icon: path.join(app.getAppPath(), 'assets/tray-icon-source.png'),
+    icon: path.join(app.getAppPath(), 'assets/icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
