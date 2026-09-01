@@ -1,7 +1,7 @@
 # Voice Dictation App — Project Notes
 
 **Status:** Planning
-**Last updated:** 2026-08-20
+**Last updated:** 2026-09-01
 **Owner:** Nikita Malhotra
 
 ---
@@ -787,8 +787,9 @@ voice-dictation-app/
 │   ├── icon.ico            # app icon
 │   ├── tray-icon.png
 │   └── tray-icon-active.png
-└── landing/                # or separate repo — decide in v3
-    └── index.html
+└── docs/                    # GitHub Pages source (landing page)
+    ├── index.html
+    └── favicon.png
 ```
 
 ---
@@ -832,6 +833,7 @@ Running record of choices and their reasons.
 | 2026-08-31 | Added `build.extraMetadata.name: "ramble"` so the packaged app's bundled `package.json` has a different `name` than the dev one (`voice-dictation-app`) | First real-world install of `v0.1.0` reused Nikita's dev-mode `electron-store` config (`onboardingComplete: true`, his real keys) because `app.getName()` — which decides electron-store's `%APPDATA%\<name>\` folder — defaults to package.json's top-level `name`, which dev and the packaged app previously shared with no override anywhere. `extraMetadata` is build-time-only (rewrites just the packaged copy of `package.json`), so dev's `npm start` and its saved config are completely unaffected; the installed app now starts at a fresh `%APPDATA%\ramble\`. Chosen over a runtime `app.setName()` call in `main.js` specifically because `src/main/settings.js`'s `new Store(...)` runs synchronously at module-require time, before almost anything else in `main.js` — a runtime call would have to land above that require with no margin for error, where a build-config fix has no such ordering risk at all. |
 | 2026-08-31 | Switched all `BrowserWindow` `icon:` options from `assets/tray-icon-source.png` to `assets/icon.ico` | The taskbar-icon-cache hypothesis (logged above, same date) turned out to be wrong — Nikita did a full clean-cache reinstall and the icon was still wrong. Extracting the `.exe`'s actual embedded icon proved it *was* correct, which narrowed the real difference to the one place still using the raw 1254×1254px/1.1MB source PNG instead of a proper pre-sized icon asset. `icon.ico` is the same multi-resolution file already proven correct for the `.exe` resource itself. See Section 13 for the full investigation trail. |
 | 2026-08-31 | Set `minimizable: true` on `settingsWindow` and `onboardingWindow` (was `false`) | Nikita asked for a minimize button; `resizable`/`maximizable` deliberately left `false` since these are small fixed-layout forms — only minimize was requested and it's independent of the other two in Electron. |
+| 2026-09-01 | Landing page lives at `docs/index.html`, not `landing/` as sketched in Section 8 | GitHub Pages' no-Actions "deploy from a branch" option only serves from the repo root or a `/docs` folder — using `docs/` keeps this a zero-config, one-file publish (flip a Settings toggle) instead of needing a GitHub Actions workflow just to serve one static page. |
 
 ---
 
@@ -914,6 +916,16 @@ Also renamed the release artifact via `artifactName: "${productName}-Setup.exe"`
 **Verification, and its limit.** `npm run dist:installer` produced `dist/Ramble-Setup.exe` (NSIS, `oneClick: false` so it shows the normal "Next → Next → Install" wizard with a choosable install directory, matching what Section 6 already documented). Confirmed unsigned as expected (`Get-AuthenticodeSignature` → `NotSigned` — no cert, so Windows SmartScreen will warn on first run; accepted per this session's constraints). Confirmed the packaged app itself actually runs by launching `dist/win-unpacked/Ramble.exe` directly — it spawned the normal multi-process Electron tree (main + GPU + renderer + utility + crashpad) exactly as a working build should. What could **not** be verified from this sandbox: running the actual NSIS installer. `Start-Process` on it was flatly refused ("An Application Control policy has blocked this file"), and invoking it directly with `/S /D=<path>` didn't error but never completed either — the process sat alive with near-zero CPU for minutes with no install files ever written, had to be force-killed. Most likely cause is this dev sandbox having no interactive desktop session for the installer to run against, not a defect in the installer itself (the unpacked app launching cleanly supports that). This is a genuine gap in this session's testing, not a shrugged-off one: **the actual install → onboarding → hold-Ctrl+Shift-in-Notepad → paste flow described in this session's success criteria has not been verified end-to-end and needs to be run manually** on the real desktop.
 
 **Release.** Tagged and published `v0.1.0` on GitHub with `dist/Ramble-Setup.exe` as the release asset (confirmed uploaded and downloadable — 108,251,624 bytes, matches the local build exactly). Intended stable download link: `https://github.com/malhotranikita2024-coder/voice-dictation-app/releases/latest/download/Ramble-Setup.exe`, chosen so it always resolves to whatever the latest release's same-named asset is, without needing Terminal 10's landing page edited on every future version bump. **That link currently 404s for anyone outside the repo**, though — the repo is private, so GitHub returns a 404 (not 403, to avoid confirming the repo's existence) to unauthenticated requests. Verified this is purely a visibility issue and not a broken asset: the same asset URL returns `200` when requested with a valid auth token. This blocks the actual assignment goal of a stranger being able to download the app and needs a decision before Terminal 10 ships the landing page — either make the repo public, or make just the Releases visible some other way. Not resolved this session since it's a repo-wide visibility change, outside this session's packaging scope.
+
+**Session 2 — landing page.**
+
+Terminal 10's job was the other half of v3: the actual webpage the task asks for, "a simple webpage with a simple download link that downloads the app." Scope stayed deliberately narrow per Section 3/7 — one screen, headline, download button, nothing resembling Wispr Flow's actual marketing site (Section 4 already ruled that out: borrow the dark/minimal aesthetic, not the content).
+
+Built as `docs/index.html` — plain HTML5 + Tailwind via CDN + Google Fonts via CDN, all decisions Section 6 had already made in advance, so this session had nothing new to evaluate there. The one real decision this session added was *where* the page lives: Section 8's original sketch had it at `landing/`, but GitHub Pages' branch-deploy option (the one that needs no build step or Actions workflow) only offers the repo root or a `/docs` folder as valid sources — so the page moved to `docs/index.html` instead, with a small `docs/favicon.png` copied from the existing `assets/tray-icon.png` (already a small, pre-sized asset — same reasoning Section 11's v2 Session 1 icon story already established about not reusing an oversized source image for a small-icon use case).
+
+The download button points at the exact stable URL the 2026-08-31 decision (`artifactName: "${productName}-Setup.exe"`) was made to support: `.../releases/latest/download/Ramble-Setup.exe`. Verified the string match directly rather than assuming it — served the page locally with `npx serve docs -l 4173`, confirmed both `index.html` (200) and `favicon.png` (200) load, then `curl`'d the rendered HTML and diffed the `href` against `package.json`'s `artifactName` output character-for-character. Also included an honest note about the unsigned-installer SmartScreen warning directly on the page, rather than letting a first-time visitor hit it as a surprise (matches Section 6/13's existing candor about that trade-off).
+
+**What's still unverified, and why**: the button's target still 404s for anyone outside the repo — same root cause as Terminal 9's still-open item in Section 13, now confirmed to block two things instead of one. GitHub Pages itself has the identical constraint: a private repo on GitHub Free can't publish Pages at all (that requires GitHub Pro/Team/Enterprise for a private source, and even then the published site is typically public regardless of the source repo's visibility) — so enabling Pages in Settings will likely surface the same wall as the Release link, not a separate problem. Extended the existing Section 13 entry to cover this rather than logging it twice, since it's one decision (repo visibility) blocking both symptoms.
 
 ---
 
@@ -1011,8 +1023,9 @@ Limitations observed during builds, mapped to the future version that addresses 
 - **Cause:** both explicitly set `minimizable: false` (`main.js:107` and `main.js:146`) — a deliberate choice from when these were first built (alongside `resizable: false, maximizable: false` for a small fixed-layout form window), not an oversight, but one Nikita wants changed.
 - **Fix:** changed both to `minimizable: true`. Left `resizable`/`maximizable` as `false` — only minimize was requested, and these are small fixed-layout forms where resize/maximize would look broken. Verified via Playwright's `_electron` driver calling `BrowserWindow.isMinimizable()` directly through Electron's own API against the rebuilt app: returns `true` for the onboarding window (confirmed live; settings window has the identical code change, not independently re-driven since the onboarding window already proves the pattern works).
 
-### GitHub Release download link 404s for anyone outside the repo
-- **Observed during:** v3 (Terminal 9 — GitHub Release creation)
+### GitHub Release download link 404s for anyone outside the repo — now also blocks the landing page + GitHub Pages
+- **Observed during:** v3 (Terminal 9 — GitHub Release creation); confirmed still blocking as of Terminal 10 (landing page)
 - **Symptom:** `.../releases/latest/download/Ramble-Setup.exe` and the direct tag-scoped asset URL both return `404` to an anonymous/unauthenticated request. Confirmed the asset itself is intact — the identical asset resolves `200` when requested with a valid GitHub auth token.
 - **Cause:** The repo (`malhotranikita2024-coder/voice-dictation-app`) is **private**. GitHub 404s (rather than 403s) unauthenticated requests to private-repo resources, including Release assets, so the "simple download link" the task asks for doesn't work for a stranger yet.
-- **Real fix:** Make the repo public (or otherwise expose just the Release) before Terminal 10's landing page ships — a private repo silently breaks the entire point of that page. This is a repo-wide visibility decision, deliberately left for Nikita to make rather than changed automatically during a packaging-scoped session.
+- **Second symptom found in Terminal 10:** this isn't just a broken link on an otherwise-fine page — GitHub Pages itself can't be turned on for a private repo on the GitHub Free plan (private-source Pages requires Pro/Team/Enterprise, and the published site is typically public either way). So `docs/index.html` is built and locally verified, but flipping the Pages toggle in repo Settings will most likely hit the same wall before the page is even reachable at a URL.
+- **Real fix:** Make the repo public (or otherwise expose just the Release, plus upgrade for private Pages) before the landing page can actually go live — a private repo silently breaks the entire point of both the Release link and the page itself. This is a repo-wide visibility decision, deliberately left for Nikita to make rather than changed automatically during a packaging- or landing-page-scoped session.

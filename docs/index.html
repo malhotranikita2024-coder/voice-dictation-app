@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ramble — Speak. It types itself.</title>
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', -apple-system, sans-serif; }
+  </style>
+</head>
+<body class="bg-neutral-950 text-neutral-100 min-h-screen flex flex-col">
+
+  <main class="flex-1 flex flex-col items-center justify-center px-6 text-center">
+    <p class="text-sm uppercase tracking-[0.2em] text-neutral-500 mb-6">Windows · Voice dictation</p>
+
+    <h1 class="text-5xl sm:text-6xl font-extrabold tracking-tight max-w-3xl leading-tight">
+      Speak. It types itself.
+    </h1>
+
+    <p class="mt-6 text-lg text-neutral-400 max-w-xl">
+      Hold a hotkey anywhere on your PC, say what you mean, and Ramble pastes clean,
+      punctuated text into whatever you're typing into — Slack, Gmail, VS Code, anywhere.
+    </p>
+
+    <a
+      href="https://github.com/malhotranikita2024-coder/voice-dictation-app/releases/latest/download/Ramble-Setup.exe"
+      class="mt-10 inline-flex items-center gap-2 bg-white text-neutral-950 font-semibold text-base px-7 py-3.5 rounded-full hover:bg-neutral-200 transition-colors"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v13" />
+        <path d="M7 11l5 5 5-5" />
+        <path d="M5 21h14" />
+      </svg>
+      Download for Windows
+    </a>
+
+    <p class="mt-4 text-sm text-neutral-500">
+      Free · Bring your own Deepgram &amp; Groq API keys · Windows 10/11 (64-bit)
+    </p>
+
+    <p class="mt-1 text-xs text-neutral-600 max-w-md">
+      The installer isn't code-signed, so Windows SmartScreen may warn on first run —
+      click "More info" → "Run anyway" to continue.
+    </p>
+  </main>
+
+  <footer class="pb-8 text-center text-xs text-neutral-600">
+    <a
+      href="https://github.com/malhotranikita2024-coder/voice-dictation-app"
+      class="hover:text-neutral-400 underline underline-offset-2"
+    >Source on GitHub</a>
+  </footer>
+
+</body>
+</html>
